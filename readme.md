@@ -36,3 +36,12 @@ Based on official AWS documentation (June 2026):
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax.html
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_AnalyzeLogData_PPL.html
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_AnalyzeLogData_SQL.html
+
+## Acknowledgements
+Some operational best practices, common pitfalls, and practical query patterns
+(e.g., latency percentiles, Lambda cold starts, request tracing, `stddev`) were
+adapted from the **aws-observability** Kiro Power by AWS Labs:
+- https://github.com/kirodotdev/powers/tree/main/aws-observability (Apache-2.0)
+
+Query syntax and function coverage in this skill are maintained independently from
+the official AWS documentation above.

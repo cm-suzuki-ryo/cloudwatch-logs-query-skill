@@ -8,6 +8,17 @@ CloudWatch Logs supports 3 query languages: Logs Insights QL, OpenSearch PPL, an
 
 Native query language for CloudWatch Logs. Uses pipe-separated commands.
 
+### Auto-discovered Fields (@-prefixed)
+CloudWatch automatically discovers these fields:
+
+| Field | Description |
+|-------|-------------|
+| `@timestamp` | Log event timestamp |
+| `@message` | Raw log message |
+| `@logStream` | Log stream name |
+| `@log` | Log group identifier |
+| `@ingestionTime` | When CloudWatch received the event |
+
 ### Commands
 
 | Command | Description |
@@ -145,6 +156,7 @@ Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`spec
 - `count(*)`, `count(field)`, `count_distinct(field)`
 - `sum(field)`, `avg(field)`, `min(field)`, `max(field)`
 - `pct(field, percentile)` — e.g., `pct(@duration, 95)`
+- `stddev(field)` — standard deviation
 - `earliest(field)`, `latest(field)`
 
 A single query supports up to 10 `stats` commands.

@@ -36,3 +36,12 @@ AWS公式ドキュメント（2026年6月時点）に基づく：
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax.html
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_AnalyzeLogData_PPL.html
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_AnalyzeLogData_SQL.html
+
+## 謝辞・出典
+一部の運用ベストプラクティス、よくある落とし穴、実用クエリパターン
+（レイテンシのパーセンタイル、Lambdaコールドスタート、リクエストトレース、`stddev` など）は、
+AWS Labs による Kiro Power **aws-observability** を参考に取り込みました：
+- https://github.com/kirodotdev/powers/tree/main/aws-observability （Apache-2.0）
+
+なお、本スキルのクエリ構文・関数の網羅内容は、上記のAWS公式ドキュメントを一次情報として
+独立に整備しています。

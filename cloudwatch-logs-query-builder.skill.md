@@ -84,6 +84,35 @@ filter @message like /(?i)error/
 stats histogram(@duration, 20) as latencyBuckets
 ```
 
+### Operational Patterns (Logs Insights QL)
+```
+# API latency percentiles over time
+filter ispresent(duration)
+| stats avg(duration) as avgMs, pct(duration, 95) as p95Ms,
+    pct(duration, 99) as p99Ms, max(duration) as maxMs by bin(5m)
+
+# Lambda cold starts per hour
+filter @type = "REPORT"
+| parse @message /Init Duration: (?<initDuration>[\d\.]+)/
+| filter ispresent(initDuration)
+| stats count(*) as coldStarts, avg(initDuration) as avgInitMs by bin(1h)
+
+# HTTP status code distribution
+filter ispresent(statusCode)
+| stats count(*) as requests by statusCode
+| sort statusCode asc
+
+# Trace a single request across streams
+filter @requestId = "abc-123-def"
+| fields @timestamp, @message, @logStream
+| sort @timestamp asc
+
+# Unique error messages
+filter @message like /(?i)error/
+| dedup @message
+| limit 30
+```
+
 ### Cross Log Group Join
 ```
 # Logs Insights QL
@@ -131,3 +160,19 @@ WHERE status >= 500 GROUP BY service;
 - Time-series functions (`rate`, `count_over_time`, `sum_over_time`, `histogram`) pair with `stats ... by bin()`; add `offset` to compare against a previous window
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
+
+## Optimization Best Practices
+- **Always cap results** with `limit` (50–100 typical) to control cost and avoid overwhelming output/agent context
+- **Narrow the time range** as much as possible — it is the biggest lever on scanned volume and cost
+- **Use `filterIndex` / `aws:fieldIndex`** on indexed fields to skip non-matching log groups
+- **Parse JSON / extract fields early**, before filtering, so later commands operate on structured fields
+- **Discover log groups first** (and confirm field names) before building complex queries
+- **Build incrementally** — start simple, verify, then add aggregations and joins
+
+## Common Pitfalls
+- **Missing `limit`** — queries can return massive result sets
+- **Not checking field existence** — use `ispresent(field)` before filtering/aggregating on optional fields
+- **Case sensitivity** — field names and regex are case-sensitive; use `/(?i).../` for case-insensitive regex
+- **Time format** — APIs expect ISO 8601 with timezone (e.g., `2026-06-10T10:00:00+00:00`)
+- **Regex escaping** — wrap patterns in `/.../` and escape special characters
+- **Overly wide time ranges** — slow and expensive
