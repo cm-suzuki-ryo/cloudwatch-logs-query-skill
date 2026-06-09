@@ -48,8 +48,8 @@ commands/functions — including corrections (e.g., `histogram` bucket width,
 `parse multi` named-capture requirement, `relevantfields` requiring `where`,
 `startsWith`/`endsWith` returning 1/0, `strcontains` 3rd arg, `rate` unconfirmed) —
 is based on the author's own hands-on verification articles:
-- https://dev.classmethod.jp/articles/cloudwatch-logs-insights-new-commands-functions-2026/ (May 2026 batch)
-- https://dev.classmethod.jp/articles/cloudwatch-logs-insights-new-commands-functions-2026-june/ (June 2026 batch — to be published)
+- https://dev.classmethod.jp/en/articles/cloudwatch-logs-insights-new-commands-functions-2026/ (May 2026 batch)
+- https://dev.classmethod.jp/en/articles/cloudwatch-logs-insights-new-commands-functions-2026-june/ (June 2026 batch)
 
 Query syntax and function coverage in this skill are maintained independently from
 the official AWS documentation above.
