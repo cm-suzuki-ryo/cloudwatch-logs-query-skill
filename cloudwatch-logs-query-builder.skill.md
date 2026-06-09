@@ -154,16 +154,24 @@ WHERE status >= 500 GROUP BY service;
 ## Tips
 - `bin()` time unit caps: ms=1000, s/m=60, h=24. Use `bin(5m)` not `bin(300s)` (capped to 60s)
 - Backtick fields with special characters: `` `@message` ``, `` `Operation.Export` ``
-- `limit any` stops scanning early once enough results are found; `limit any N` fetches the first N results (cost reduction)
+- `limit any` stops scanning early once enough results are found; `limit any N` fetches the first N results (measured: 373 vs 36,535 records scanned for `limit any 3` vs `limit 3`)
 - `stats` can be chained — up to 10 commands on Standard log class, up to 2 on Infrequent Access; later `stats` only sees fields from the previous one
 - `parse` modes — glob, regex, `logfmt`, `csv`, `XML` (XPath). For regex multi-match add `multi` and use **named capture groups** (`as alias multi` is a syntax error); use `json field=` for chained JSON extraction
-- `histogram(field, width)` is a `by`-clause grouping function (2nd arg is bucket width), not a `stats` aggregation
+- `histogram(field, width)` is a `by`-clause grouping function — 2nd arg is bucket **width** (official docs say "number of buckets", but hands-on testing confirms width)
 - Hashing functions (`md5`, `sha256`) work in `fields` and `filter` — useful to bucket or anonymize high-cardinality values
-- `count_over_time`/`sum_over_time` pair with `stats ... by bin()`; `offset` shifts bin boundary alignment. `rate` has no confirmed working syntax as of testing
+- `count_over_time(*)`/`sum_over_time(field)` equal `count(*)`/`sum(field)`; `offset` shifts bin boundary alignment. `rate(field, period)` computes the per-period rate of change within each bin (returns 0 when the field is constant)
 - `strcontains` 3rd (case-insensitive) arg currently has no effect; `startsWith`/`endsWith` return `1`/`0`, not boolean
-- `relevantfields` requires a `where` clause: `relevantfields <fields> where <cond>`
+- `earliest(field)`/`latest(field)` return epoch **milliseconds** — convert with `fromMillis()`
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
+
+## Command Ordering & Gotchas (verified)
+- `relevantfields` requires a `where` clause and does **not** accept `parse`-created fields — use `@message`/auto-discovered fields: `relevantfields @message where @message like /GET/`
+- `dedup` cannot be followed by `sort` (syntax error) — order as `sort` → `dedup`
+- `diff` is only usable **after** `pattern` (e.g., `pattern @message | diff`)
+- `jsonParse` dot access must be in a **separate `fields`** command from the `jsonParse` call
+- `addtotals` adds a `Total` column after `fields`, but the total may not appear after `stats ... by`
+- `expand` does not flatten a `split()` result; `unnest` on a `split()` result raises `MalformedQueryException`
 
 ## Optimization Best Practices
 - **Always cap results** with `limit` (50–100 typical) to control cost and avoid overwhelming output/agent context

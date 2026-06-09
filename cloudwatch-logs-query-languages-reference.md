@@ -30,19 +30,19 @@ CloudWatch automatically discovers these fields:
 | `sort` | Sort results ascending (`asc`) or descending (`desc`) |
 | `limit` | Limit results to N rows. `limit any` stops scanning early |
 | `parse` | Extract fields. Modes: glob (`*`), regex (`/pattern/`), `logfmt`, `csv`, `XML` (XPath). Regex supports `multi` (named capture groups required); `json field=` for chained JSON extraction |
-| `relevantfields` | Surface the fields most correlated with a condition. **`where` clause is required**: `relevantfields <fields> where <cond>` |
-| `expand` | Flatten a list/array field into multiple records (one per element). In practice works on arrays extracted as strings via `parse` glob/regex; auto-parsed JSON list types may not expand |
+| `relevantfields` | Surface the fields most correlated with a condition. **`where` clause is required**: `relevantfields <fields> where <cond>`. Fields created by `parse` are NOT supported — use `@message` / auto-discovered fields only |
+| `expand` | Flatten a list/array field into multiple records (one per element). Works on arrays extracted as strings via `parse` glob/regex. NOTE: a `split()` result is not flattened (no error, but stays one row); auto-parsed JSON list types may not expand |
 | `display` | Display specific fields in output |
-| `dedup` | Remove duplicates based on specified fields |
+| `dedup` | Remove duplicates based on specified fields. NOTE: `sort` cannot follow `dedup` (syntax error) — order as `sort` → `dedup` |
 | `pattern` | Auto-cluster log data into patterns |
-| `diff` | Compare current time period with previous equal-length period |
+| `diff` | Compare current time period with previous equal-length period. NOTE: only usable **after** `pattern` (e.g., `pattern @message \| diff`) |
 | `anomaly` | Identify unusual patterns using ML |
 | `unmask` | Show masked content (data protection) |
-| `unnest` | Flatten a list into multiple records |
+| `unnest` | Flatten a list into multiple records. Use on native arrays (e.g., from `jsonParse`). NOTE: a `split()` result raises `MalformedQueryException` |
 | `lookup` | Enrich events with lookup table data |
 | `join` | Combine events from different log groups by matching field |
 | `subqueries` | Nested queries as input to another query |
-| `addtotals` | Add a row-total column (default name `Total`) summing all numeric fields in the query; `addtotals fieldname=RowSum` renames it. `col=true` adds a column-total row (console UI only) |
+| `addtotals` | Add a row-total column (default name `Total`) summing all numeric fields in the query; `addtotals fieldname=RowSum` renames it. Works after `fields`. NOTE: after `stats ... by`, the total column may not appear (the `by` field is treated as non-numeric). `col=true` adds a column-total row (console UI only) |
 | `SOURCE` | Specify log groups (CLI/API only, not console) by prefix, account, class, data source, or tags |
 
 ### Syntax
@@ -118,6 +118,12 @@ Time units: `ms`, `s`, `m`, `h`, `d`, `w`, `mo`/`mon`, `q`/`qtr`, `y`/`yr`
 
 Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`special.key` ``
 
+NOTE: dot access on a `jsonParse` result (`j.field`) does NOT work in the **same `fields` command** as the `jsonParse` call — split into two `fields` commands:
+```
+fields jsonParse(@message) as j
+| fields j.status as statusCode, j.user as userName
+```
+
 ### IP Address Functions
 | Function | Description |
 |----------|-------------|
@@ -160,7 +166,7 @@ Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`spec
 - `pct(field, percentile)` — e.g., `pct(@duration, 95)`
 - `stddev(field)` — standard deviation
 - `values(field)` — distinct values per group (returned as a comma-separated representation in API results)
-- `earliest(field)`, `latest(field)`
+- `earliest(field)`, `latest(field)` — return epoch **milliseconds** (not a human-readable timestamp); use `fromMillis()` to convert
 
 `stats` can be chained: up to 10 `stats` commands on Standard log class, up to 2 on Infrequent Access. A later `stats` can only reference fields defined by the previous one; place `sort`/`limit` after the final `stats`.
 
@@ -177,9 +183,9 @@ Used with the `stats` command to analyze numeric fields over time windows.
 
 | Function | Description |
 |----------|-------------|
-| `count_over_time(*)` | Count log events per time bin (use with `by bin(interval)`). Behaved like `count(*)` in testing |
-| `sum_over_time(field)` | Sum field values per time bin (use with `by bin(interval)`). Behaved like `sum(field)` in testing |
-| `rate(...)` | Per-interval rate of change. NOTE: no working syntax could be confirmed in testing (all attempts returned compile errors); exact signature unverified |
+| `count_over_time(*)` | Count log events per time bin (use with `by bin(interval)`). Equivalent to `count(*)` |
+| `sum_over_time(field)` | Sum field values per time bin (use with `by bin(interval)`). Equivalent to `sum(field)` |
+| `rate(field, period)` | Per-interval rate of change for a numeric field. Use with `stats ... by bin()`; returns the average change per `period` within each bin (returns 0 when values are constant) |
 
 **`histogram(field, bucketWidth)`** — a `by`-clause **grouping** function (not a `stats` aggregation). It buckets a numeric field by the given **bucket width** and returns each bucket's lower bound. Use as:
 ```
@@ -189,6 +195,12 @@ stats count(*) as cnt by histogram(value, 50)
 **`offset` modifier** — append to a `stats ... by bin()` clause to shift the bin **boundary alignment** by a duration (bins are UTC-00:00 aligned by default). Useful to align buckets to business hours:
 ```
 stats count(*) by bin(5m) offset 5m
+```
+
+**`rate` example** — average per-period change of a numeric field within each bin:
+```
+fields toMillis(@timestamp) as ms
+| stats rate(ms, 1m) as rateVal by bin(5m)
 ```
 
 ### Sample Queries
