@@ -18,7 +18,9 @@ Native query language for CloudWatch Logs. Uses pipe-separated commands.
 | `stats` | Aggregate statistics (count, sum, avg, min, max, pct, etc.) with `by` grouping |
 | `sort` | Sort results ascending (`asc`) or descending (`desc`) |
 | `limit` | Limit results to N rows. `limit any` stops scanning early |
-| `parse` | Extract fields using glob (`*`) or regex (`/pattern/`) |
+| `parse` | Extract fields. 4 modes: glob (`*`), regex (`/pattern/`), `logfmt`, `csv`. Regex supports `multi` for multi-match; `json field=` for chained JSON extraction |
+| `relevantfields` | Automatically surface the fields most relevant to the query results |
+| `expand` | Flatten a list/array field into multiple records (one per element) |
 | `display` | Display specific fields in output |
 | `dedup` | Remove duplicates based on specified fields |
 | `pattern` | Auto-cluster log data into patterns |
@@ -145,6 +147,32 @@ Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`spec
 - `pct(field, percentile)` — e.g., `pct(@duration, 95)`
 - `earliest(field)`, `latest(field)`
 
+A single query supports up to 10 `stats` commands.
+
+### Hashing Functions
+Usable in `fields` and `filter` commands.
+
+| Function | Description |
+|----------|-------------|
+| `md5(field)` | MD5 hash of the string value |
+| `sha256(field)` | SHA-256 hash of the string value |
+
+### Time-series Functions
+Used with the `stats` command to analyze metrics over time windows and compute rates of change.
+
+| Function | Description |
+|----------|-------------|
+| `rate(field, interval)` | Per-interval rate of change for a numeric field |
+| `count_over_time(field)` | Count log events per time bin (use with `by bin(interval)`) |
+| `sum_over_time(field)` | Sum field values per time bin (use with `by bin(interval)`) |
+| `histogram(field, buckets)` | Bucketize numeric values into N equal-width ranges; returns distribution map |
+
+**`offset` modifier** — append to a `stats ... by bin()` clause to shift time-series bins, enabling time-shifted comparisons:
+```
+stats count(*) by bin(5m) offset 1h
+stats avg(latency) by bin(1m) offset 1d
+```
+
 ### Sample Queries
 
 **Last 25 events:**
@@ -189,6 +217,33 @@ parse @message "user=*, method:*, latency := *" as @user, @method, @latency
 ```
 parse @message /user=(?<user>.*?), method:(?<method>.*?), latency := (?<latency>.*?)/
 | stats avg(latency) by @method, @user
+```
+
+**Parse example (logfmt):**
+```
+parse @message logfmt as lf
+| filter lf.level = "error"
+| display lf.msg, lf.duration
+```
+
+**Parse example (CSV):**
+```
+parse @message csv as timestamp, level, message
+| filter level = "ERROR"
+| display timestamp, message
+```
+
+**Parse example (regex multi-match — all IPs as separate rows):**
+```
+parse @message /(\d+\.\d+\.\d+\.\d+)/ as ip_addr multi
+| stats count(*) by ip_addr
+```
+
+**Parse example (chained JSON field extraction):**
+```
+parse @message /(?<payload>\{.*\})/ as payload
+| json field=payload "user.name" as username
+| display username
 ```
 
 ---

@@ -20,6 +20,9 @@ Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands,
 - Need `pattern` for auto-clustering logs
 - Need `diff` for time-period comparison
 - Need `anomaly` for ML-based detection
+- Need time-series analytics (`rate`, `count_over_time`, `sum_over_time`, `histogram`) or `offset` for time-shifted comparison
+- Need to parse structured formats inline (`logfmt`, `csv`) or chained JSON extraction
+- Need hashing (`md5`, `sha256`) to group/anonymize values
 - Querying Infrequent Access log class
 
 ### Use OpenSearch PPL when:
@@ -71,6 +74,16 @@ SELECT COUNT(*) as errorCount,
 GROUP BY TUMBLE(`@timestamp`, '5 minutes');
 ```
 
+### Time-series Rate & Time-shift (Logs Insights QL only)
+```
+# Per-minute error rate, compared with the same window 1 day earlier
+filter @message like /(?i)error/
+| stats count_over_time(@message) as errors by bin(1m) offset 1d
+
+# Latency distribution as a histogram
+stats histogram(@duration, 20) as latencyBuckets
+```
+
 ### Cross Log Group Join
 ```
 # Logs Insights QL
@@ -111,6 +124,10 @@ WHERE status >= 500 GROUP BY service;
 ## Tips
 - `bin()` time unit caps: ms=1000, s/m=60, h=24. Use `bin(5m)` not `bin(300s)` (capped to 60s)
 - Backtick fields with special characters: `` `@message` ``, `` `Operation.Export` ``
-- `limit any` stops scanning early (cost reduction)
+- `limit any` stops scanning early once enough results are found; `limit any N` fetches the first N results (cost reduction)
+- A single query supports up to 10 `stats` commands
+- `parse` has 4 modes — glob, regex, `logfmt`, `csv`. Add `multi` after a regex to emit one row per match; use `json field=` for chained JSON extraction
+- Hashing functions (`md5`, `sha256`) work in `fields` and `filter` — useful to bucket or anonymize high-cardinality values
+- Time-series functions (`rate`, `count_over_time`, `sum_over_time`, `histogram`) pair with `stats ... by bin()`; add `offset` to compare against a previous window
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
