@@ -74,14 +74,15 @@ SELECT COUNT(*) as errorCount,
 GROUP BY TUMBLE(`@timestamp`, '5 minutes');
 ```
 
-### Time-series Rate & Time-shift (Logs Insights QL only)
+### Time-series Analytics (Logs Insights QL only)
 ```
-# Per-minute error rate, compared with the same window 1 day earlier
+# Count events per minute, with bin boundary shifted by offset
 filter @message like /(?i)error/
-| stats count_over_time(@message) as errors by bin(1m) offset 1d
+| stats count_over_time(*) as errors by bin(1m) offset 5m
 
-# Latency distribution as a histogram
-stats histogram(@duration, 20) as latencyBuckets
+# Latency distribution — histogram is a `by`-clause grouping fn; 2nd arg is bucket WIDTH
+filter ispresent(duration)
+| stats count(*) as cnt by histogram(duration, 50)
 ```
 
 ### Operational Patterns (Logs Insights QL)
@@ -154,10 +155,13 @@ WHERE status >= 500 GROUP BY service;
 - `bin()` time unit caps: ms=1000, s/m=60, h=24. Use `bin(5m)` not `bin(300s)` (capped to 60s)
 - Backtick fields with special characters: `` `@message` ``, `` `Operation.Export` ``
 - `limit any` stops scanning early once enough results are found; `limit any N` fetches the first N results (cost reduction)
-- A single query supports up to 10 `stats` commands
-- `parse` has 4 modes — glob, regex, `logfmt`, `csv`. Add `multi` after a regex to emit one row per match; use `json field=` for chained JSON extraction
+- `stats` can be chained — up to 10 commands on Standard log class, up to 2 on Infrequent Access; later `stats` only sees fields from the previous one
+- `parse` modes — glob, regex, `logfmt`, `csv`, `XML` (XPath). For regex multi-match add `multi` and use **named capture groups** (`as alias multi` is a syntax error); use `json field=` for chained JSON extraction
+- `histogram(field, width)` is a `by`-clause grouping function (2nd arg is bucket width), not a `stats` aggregation
 - Hashing functions (`md5`, `sha256`) work in `fields` and `filter` — useful to bucket or anonymize high-cardinality values
-- Time-series functions (`rate`, `count_over_time`, `sum_over_time`, `histogram`) pair with `stats ... by bin()`; add `offset` to compare against a previous window
+- `count_over_time`/`sum_over_time` pair with `stats ... by bin()`; `offset` shifts bin boundary alignment. `rate` has no confirmed working syntax as of testing
+- `strcontains` 3rd (case-insensitive) arg currently has no effect; `startsWith`/`endsWith` return `1`/`0`, not boolean
+- `relevantfields` requires a `where` clause: `relevantfields <fields> where <cond>`
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
 

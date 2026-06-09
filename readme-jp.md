@@ -43,5 +43,12 @@ AWS公式ドキュメント（2026年6月時点）に基づく：
 AWS Labs による Kiro Power **aws-observability** を参考に取り込みました：
 - https://github.com/kirodotdev/powers/tree/main/aws-observability （Apache-2.0）
 
+2026年5月（13個）・6月（23個）の新コマンド・関数の実機挙動（`histogram` のバケット幅、
+`parse multi` の名前付きキャプチャ必須、`relevantfields` の `where` 必須、
+`startsWith`/`endsWith` の 1/0 返り値、`strcontains` 第3引数、`rate` 未確定などの補正を含む）は、
+suzuki.ryo による実機検証記事に基づきます：
+- https://dev.classmethod.jp/articles/cloudwatch-logs-insights-new-commands-functions-2026/ （5月分）
+- https://dev.classmethod.jp/articles/cloudwatch-logs-insights-new-commands-functions-2026-june/ （6月分・公開予定）
+
 なお、本スキルのクエリ構文・関数の網羅内容は、上記のAWS公式ドキュメントを一次情報として
 独立に整備しています。

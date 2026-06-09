@@ -29,9 +29,9 @@ CloudWatch automatically discovers these fields:
 | `stats` | Aggregate statistics (count, sum, avg, min, max, pct, etc.) with `by` grouping |
 | `sort` | Sort results ascending (`asc`) or descending (`desc`) |
 | `limit` | Limit results to N rows. `limit any` stops scanning early |
-| `parse` | Extract fields. 4 modes: glob (`*`), regex (`/pattern/`), `logfmt`, `csv`. Regex supports `multi` for multi-match; `json field=` for chained JSON extraction |
-| `relevantfields` | Automatically surface the fields most relevant to the query results |
-| `expand` | Flatten a list/array field into multiple records (one per element) |
+| `parse` | Extract fields. Modes: glob (`*`), regex (`/pattern/`), `logfmt`, `csv`, `XML` (XPath). Regex supports `multi` (named capture groups required); `json field=` for chained JSON extraction |
+| `relevantfields` | Surface the fields most correlated with a condition. **`where` clause is required**: `relevantfields <fields> where <cond>` |
+| `expand` | Flatten a list/array field into multiple records (one per element). In practice works on arrays extracted as strings via `parse` glob/regex; auto-parsed JSON list types may not expand |
 | `display` | Display specific fields in output |
 | `dedup` | Remove duplicates based on specified fields |
 | `pattern` | Auto-cluster log data into patterns |
@@ -42,7 +42,7 @@ CloudWatch automatically discovers these fields:
 | `lookup` | Enrich events with lookup table data |
 | `join` | Combine events from different log groups by matching field |
 | `subqueries` | Nested queries as input to another query |
-| `addtotals` | Compute row/column totals for numeric fields |
+| `addtotals` | Add a row-total column (default name `Total`) summing all numeric fields in the query; `addtotals fieldname=RowSum` renames it. `col=true` adds a column-total row (console UI only) |
 | `SOURCE` | Specify log groups (CLI/API only, not console) by prefix, account, class, data source, or tags |
 
 ### Syntax
@@ -87,6 +87,8 @@ fields @timestamp, @message
 | `toInt(field)` | String to int (32-bit) |
 | `toLong(field)` | String to long (64-bit) |
 | `toDouble(field)` | String to double |
+
+Conversion behavior (verified): `toInt`/`toLong` truncate the fractional part; `toDouble`/`toNumber` preserve decimals. A value that cannot be converted returns `null` (no error).
 
 ### Datetime Functions
 | Function | Description |
@@ -145,9 +147,9 @@ Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`spec
 | `substr(str, start [, len])` | Substring |
 | `replace(str, search, replace)` | Replace all occurrences |
 | `regex_replace(str, pattern, replacement)` | Regex replace (RE2) |
-| `strcontains(str, search [, caseInsensitive])` | Contains check |
-| `startsWith(str, prefix)` | Starts with |
-| `endsWith(str, suffix)` | Ends with |
+| `strcontains(str, search [, caseInsensitive])` | Contains check. NOTE: the 3rd (case-insensitive) argument is accepted but had no effect in testing — matching stays case-sensitive |
+| `startsWith(str, prefix)` | Starts with — returns `1`/`0` (not boolean) |
+| `endsWith(str, suffix)` | Ends with — returns `1`/`0` (not boolean) |
 | `urlencode(str)` / `urldecode(str)` | URL encode/decode |
 | `base64encode(str)` / `base64decode(str)` | Base64 encode/decode |
 | `split(str, delimiter)` | Split to array |
@@ -157,9 +159,10 @@ Access: `json.field`, `json.list[0]`, backticks for special chars: `` json.`spec
 - `sum(field)`, `avg(field)`, `min(field)`, `max(field)`
 - `pct(field, percentile)` — e.g., `pct(@duration, 95)`
 - `stddev(field)` — standard deviation
+- `values(field)` — distinct values per group (returned as a comma-separated representation in API results)
 - `earliest(field)`, `latest(field)`
 
-A single query supports up to 10 `stats` commands.
+`stats` can be chained: up to 10 `stats` commands on Standard log class, up to 2 on Infrequent Access. A later `stats` can only reference fields defined by the previous one; place `sort`/`limit` after the final `stats`.
 
 ### Hashing Functions
 Usable in `fields` and `filter` commands.
@@ -169,20 +172,23 @@ Usable in `fields` and `filter` commands.
 | `md5(field)` | MD5 hash of the string value |
 | `sha256(field)` | SHA-256 hash of the string value |
 
-### Time-series Functions
-Used with the `stats` command to analyze metrics over time windows and compute rates of change.
+### Time-series / Analytics Functions
+Used with the `stats` command to analyze numeric fields over time windows.
 
 | Function | Description |
 |----------|-------------|
-| `rate(field, interval)` | Per-interval rate of change for a numeric field |
-| `count_over_time(field)` | Count log events per time bin (use with `by bin(interval)`) |
-| `sum_over_time(field)` | Sum field values per time bin (use with `by bin(interval)`) |
-| `histogram(field, buckets)` | Bucketize numeric values into N equal-width ranges; returns distribution map |
+| `count_over_time(*)` | Count log events per time bin (use with `by bin(interval)`). Behaved like `count(*)` in testing |
+| `sum_over_time(field)` | Sum field values per time bin (use with `by bin(interval)`). Behaved like `sum(field)` in testing |
+| `rate(...)` | Per-interval rate of change. NOTE: no working syntax could be confirmed in testing (all attempts returned compile errors); exact signature unverified |
 
-**`offset` modifier** — append to a `stats ... by bin()` clause to shift time-series bins, enabling time-shifted comparisons:
+**`histogram(field, bucketWidth)`** — a `by`-clause **grouping** function (not a `stats` aggregation). It buckets a numeric field by the given **bucket width** and returns each bucket's lower bound. Use as:
 ```
-stats count(*) by bin(5m) offset 1h
-stats avg(latency) by bin(1m) offset 1d
+stats count(*) as cnt by histogram(value, 50)
+```
+
+**`offset` modifier** — append to a `stats ... by bin()` clause to shift the bin **boundary alignment** by a duration (bins are UTC-00:00 aligned by default). Useful to align buckets to business hours:
+```
+stats count(*) by bin(5m) offset 5m
 ```
 
 ### Sample Queries
@@ -245,10 +251,25 @@ parse @message csv as timestamp, level, message
 | display timestamp, message
 ```
 
-**Parse example (regex multi-match — all IPs as separate rows):**
+**Parse example (regex multi-match — emit one row per match):**
 ```
-parse @message /(\d+\.\d+\.\d+\.\d+)/ as ip_addr multi
+# multi REQUIRES named capture groups; `as alias multi` is a syntax error
+parse @message /(?<ip_addr>\d+\.\d+\.\d+\.\d+)/ multi
 | stats count(*) by ip_addr
+```
+
+**Parse example (XML via XPath — one parse per field):**
+```
+filter @message like /<event>/
+| parse @message XML '/event/level' as xlevel
+| parse @message XML '/event/service' as xsvc
+| display xlevel, xsvc
+```
+
+**Distinct values per group (`values`):**
+```
+filter ispresent(service) and ispresent(level)
+| stats values(service) as services by level
 ```
 
 **Parse example (chained JSON field extraction):**
