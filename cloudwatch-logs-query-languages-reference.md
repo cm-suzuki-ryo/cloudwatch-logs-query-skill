@@ -328,6 +328,7 @@ fields @timestamp, requestId, endpoint, status
     (SOURCE '/aws/lambda/payment-service')
 | filter !ispresent(payment.paymentStatus) or payment.paymentStatus != "SUCCESS"
 | fields order.transactionId, order.orderId, payment.paymentStatus, payment.amount
+| limit 50
 ```
 
 **Restrictions:**
@@ -336,6 +337,7 @@ fields @timestamp, requestId, endpoint, status
 - Join keys must exist in both sources and be of compatible types
 - The number of unique key values in the secondary (right) source is limited to 50,000
 - Subqueries on the right side of join are not supported
+- The right side `SOURCE` cannot contain pipe operations (e.g., `fields`, `filter`) — only the log group path is allowed (Phase 1 limitation)
 - In the console, select ONLY the primary (left) log group; the right log group is specified via `SOURCE`. Selecting both causes `ServiceUnavailableException`
 
 ### Subquery Syntax
@@ -377,6 +379,7 @@ filter requestId in (
 ```
 
 **Restrictions:**
+- Subquery must produce exactly one output column (via `fields` or `stats`). Multiple fields cause `MalformedQueryException`
 - Nested subqueries are not supported
 - Correlated subqueries are not supported
 - Inner query execution is limited to 30 seconds

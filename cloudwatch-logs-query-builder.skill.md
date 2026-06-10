@@ -133,6 +133,7 @@ fields @timestamp, requestId, endpoint, status
     (SOURCE '/aws/lambda/payment-service')
 | filter !ispresent(payment.paymentStatus) or payment.paymentStatus != "SUCCESS"
 | fields order.transactionId, order.orderId, payment.paymentStatus
+| limit 50
 
 # PPL
 LEFT JOIN left=l, right=r ON l.requestId = r.requestId `other-log-group`
@@ -199,8 +200,8 @@ WHERE status >= 500 GROUP BY service;
 - `earliest(field)`/`latest(field)` return epoch **milliseconds** — convert with `fromMillis()`
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
-- `join` supports only equality (`=`) conditions, max 1 join per query, max 50,000 unique keys on right side; subqueries on right side are not supported
-- `filter field in (subquery)` — subquery runs independently (max 30s); nested/correlated subqueries are not supported
+- `join` supports only equality (`=`) conditions, max 1 join per query, max 50,000 unique keys on right side; subqueries on right side are not supported; right side `SOURCE` cannot contain pipe operations (Phase 1 limitation)
+- `filter field in (subquery)` — subquery runs independently (max 30s); must produce exactly one output column (via `fields` or `stats`); nested/correlated subqueries are not supported
 - When using `join` or subquery with `SOURCE`, select ONLY the primary log group in console; selecting both causes `ServiceUnavailableException`
 
 ## Command Ordering & Gotchas (verified)
