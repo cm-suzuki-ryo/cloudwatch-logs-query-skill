@@ -1,0 +1,20 @@
+{
+  "project_type": "Kiro skill - markdown documentation files for CloudWatch Logs query generation",
+  "language": "Markdown",
+  "build_system": "None - pure documentation/markdown files",
+  "test_framework": "None - no automated tests",
+  "build_command": null,
+  "test_command": null,
+  "verification_instructions": "Manually review the modified markdown files for correctness, formatting consistency, and completeness",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup required - edit markdown files directly",
+  "environment_constraints": "No network access needed. Pure markdown editing task.",
+  "contribution_requirements": "Follow existing markdown formatting conventions used in the skill and reference files",
+  "key_patterns": "The skill file uses ## for major sections, ### for subsections. Code examples use triple backtick fenced blocks with language hints. Tables use pipe-delimited markdown. The reference file uses --- horizontal rules between major language sections. Tips/gotchas use bullet lists with bold lead text.",
+  "relevant_files": [
+    "cloudwatch-logs-query-builder.skill.md",
+    "cloudwatch-logs-query-languages-reference.md",
+    "readme-jp.md"
+  ],
+  "directory_structure": "Flat repository with 4 main files: skill file, reference file, English readme, Japanese readme"
+}

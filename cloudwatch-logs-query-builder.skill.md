@@ -175,14 +175,31 @@ Logs Insights QL uses a pipe-separated pipeline. Each command feeds its output t
 filterIndex (must be first if present)
     |
     v
-fields / parse / filter  (pre-aggregation, any order, repeatable)
+fields / parse / filter / jsonParse  (pre-aggregation, any order, repeatable)
+    |                            |
+    |                            +---> relevantfields (requires where clause;
+    |                            |       only @message/auto-discovered fields)
+    |                            |
+    |                            +---> pattern --> diff (diff only after pattern)
+    |                            |
+    |                            +---> addtotals (after fields; unreliable after stats...by)
     |
     v
 stats ... by  (aggregation; chainable up to 10x Standard / 2x IA)
     |
     v
-sort / limit / display  (post-aggregation, after final stats)
+sort --> dedup (sort MUST precede dedup; dedup followed by sort = syntax error)
+    |
+    v
+limit / display  (post-aggregation, after final stats/sort)
+
+Parallel pipeline (join):
+    main pipeline --+--> join @field [ SOURCE '...' | ... ] as alias
+                    |
+                    +--> display main.field, alias.field
 ```
+
+> **Note:** This diagram covers the complete command set. Commands not shown here (`expand`, `unnest`) have restrictions -- see Ordering Constraints below.
 
 ### Ordering Constraints
 
@@ -192,8 +209,15 @@ sort / limit / display  (post-aggregation, after final stats)
 | **`fields` / `parse` / `filter` before `stats`** | These pre-aggregation commands can appear in any order and repeat, but must come before the first `stats`. |
 | **`stats` can chain** | Multiple `stats` commands can follow each other. Each subsequent `stats` only sees fields produced by the previous one. Standard log class allows up to 10 chained `stats`; Infrequent Access allows up to 2. |
 | **`sort` before `dedup`** | `dedup` cannot be followed by `sort` (syntax error). Correct order: `sort` then `dedup`. |
-| **`diff` only after `pattern`** | The `diff` command is only valid immediately after a `pattern` command. |
+| **`diff` only after `pattern`** | The `diff` command is only valid immediately after a `pattern` command (e.g., `pattern @message \| diff`). |
+| **`pattern` is pre-aggregation** | `pattern` auto-clusters log messages. It sits in the pre-aggregation stage and can be followed by `diff` for time-period comparison. |
+| **`relevantfields` restrictions** | Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields -- `parse`-created fields are not supported. |
+| **`addtotals` after `fields`** | Adds a `Total` column. Works after `fields` but may not produce visible totals after `stats ... by`. |
+| **`jsonParse` dot access requires separate command** | Dot access on a `jsonParse` result cannot be in the same `fields` command; split into two `fields` commands. |
+| **`join` mid-pipeline** | `join` can appear after pre-aggregation commands. The sub-pipeline in brackets has its own `SOURCE`, `fields`, `parse`, `filter` chain. |
+| **`expand`/`unnest` limitations** | Neither command flattens a `split()` result. `unnest` on `split()` raises `MalformedQueryException`. |
 | **`sort` / `limit` / `display` after final `stats`** | Post-aggregation formatting commands come at the end of the pipeline, after the last `stats`. |
+| **No `HAVING` equivalent** | Logs Insights QL cannot filter rows after `stats`. See the "Post-Aggregation Filtering" pattern below for workarounds. |
 
 ### Example: Full Valid Pipeline
 
@@ -205,16 +229,46 @@ filterIndex accountId = '123456789012'
 | stats avg(latency) as avgLatency, count(*) as cnt by bin(5m)
 | stats max(avgLatency) as peakLatency by bin(1h)
 | sort peakLatency desc
+| dedup peakLatency
 | limit 20
 ```
 
-## Command Ordering & Gotchas (verified)
-- `relevantfields` requires a `where` clause and does **not** accept `parse`-created fields — use `@message`/auto-discovered fields: `relevantfields @message where @message like /GET/`
-- `dedup` cannot be followed by `sort` (syntax error) — order as `sort` → `dedup`
-- `diff` is only usable **after** `pattern` (e.g., `pattern @message | diff`)
-- `jsonParse` dot access must be in a **separate `fields`** command from the `jsonParse` call
-- `addtotals` adds a `Total` column after `fields`, but the total may not appear after `stats ... by`
-- `expand` does not flatten a `split()` result; `unnest` on a `split()` result raises `MalformedQueryException`
+### Post-Aggregation Filtering (No HAVING Equivalent)
+
+Logs Insights QL has no `HAVING` clause. You cannot use `filter` after `stats` to exclude aggregated rows. Use these workarounds:
+
+**Workaround 1: Sort descending + limit (most common)**
+
+When you want "top N groups by count," sort descending and limit. Low-count groups end up at the bottom or are excluded by the limit:
+
+```
+stats count(*) as errors by service
+| sort errors desc
+| limit 10
+```
+
+**Workaround 2: Chained stats to narrow results**
+
+Use a second `stats` that re-aggregates only the metric you care about, effectively discarding groups that don't meet a threshold. For example, to find services with high error rates, compute a ratio and then aggregate only those above a threshold pattern:
+
+```
+filter @message like /(?i)error/
+| stats count(*) as errors by service
+| stats sum(errors) as totalErrors, count(*) as serviceCount
+```
+
+**Workaround 3: Pre-filter to approximate thresholds**
+
+If you know the approximate volume, tighten the pre-aggregation `filter` or narrow the time range so that only high-volume groups survive:
+
+```
+filter @message like /(?i)error/ and service = "critical-service"
+| stats count(*) as errors by operation
+| sort errors desc
+| limit 20
+```
+
+**Key takeaway:** Always design queries knowing that post-`stats` filtering is impossible. Structure the pipeline so that `sort desc | limit N` gives you the meaningful subset.
 
 ## Optimization Best Practices
 - **Always cap results** with `limit` (50–100 typical) to control cost and avoid overwhelming output/agent context
@@ -244,14 +298,15 @@ stats count(*) as errors by service
 | filter errors > 10
 ```
 
-**Why it is wrong:** After a `stats` command, only `stats`, `sort`, `limit`, and `display` are valid. `filter` is a pre-aggregation command and cannot appear after `stats`.
+**Why it is wrong:** After a `stats` command, only `stats`, `sort`, `limit`, and `display` are valid. `filter` is a pre-aggregation command and cannot appear after `stats`. Logs Insights QL has no `HAVING` equivalent.
 
 **Correct approach:**
 ```
 stats count(*) as errors by service
 | sort errors desc
+| limit 10
 ```
-Apply filtering conditions before `stats`, or use a chained `stats` to narrow results.
+Since post-aggregation filtering is impossible in Logs Insights QL, use `sort desc | limit N` to surface only the highest-count groups. If you need a hard threshold cutoff, consider narrowing the pre-aggregation `filter` or time range so that low-count groups are excluded before aggregation. See "Post-Aggregation Filtering" in the Command Pipeline Ordering Rules section for detailed workarounds.
 
 ---
 
@@ -341,7 +396,15 @@ fields @message
 
 **Why it is wrong:** `unnest` on a `split()` result raises a `MalformedQueryException`. The `unnest` and `expand` commands do not support flattening arrays produced by `split()`.
 
-**Correct approach:** Restructure the query to avoid splitting into arrays. Use multiple `parse` commands to extract individual values, or filter using `like`/regex against the original string field.
+**Correct approach:**
+```
+fields @message
+| parse @message /tags=(?<tags>[^;]+)/
+| parse tags /(?<tag1>[^,]+),?(?<tag2>[^,]+)?/
+| filter ispresent(tag1)
+| display tag1, tag2
+```
+Use multiple `parse` commands with regex capture groups to extract individual values from a delimited string, or filter against the original string using `like`/regex (e.g., `filter tags like /my-tag/`).
 
 ---
 
