@@ -1,5 +1,7 @@
 # CloudWatch Logs Query Languages Reference
 
+Last verified: 2026-06
+
 CloudWatch Logs supports 3 query languages: Logs Insights QL, OpenSearch PPL, and OpenSearch SQL.
 
 ---

@@ -165,13 +165,104 @@ WHERE status >= 500 GROUP BY service;
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
 
-## Command Ordering & Gotchas (verified)
-- `relevantfields` requires a `where` clause and does **not** accept `parse`-created fields — use `@message`/auto-discovered fields: `relevantfields @message where @message like /GET/`
-- `dedup` cannot be followed by `sort` (syntax error) — order as `sort` → `dedup`
-- `diff` is only usable **after** `pattern` (e.g., `pattern @message | diff`)
-- `jsonParse` dot access must be in a **separate `fields`** command from the `jsonParse` call
-- `addtotals` adds a `Total` column after `fields`, but the total may not appear after `stats ... by`
-- `expand` does not flatten a `split()` result; `unnest` on a `split()` result raises `MalformedQueryException`
+## Command Pipeline Ordering Rules
+
+Logs Insights QL uses a pipe-separated pipeline. Each command feeds its output to the next. The following rules define valid ordering.
+
+### Valid Pipeline Flow
+
+```
+filterIndex (recommended first for scan reduction; accepted at any position)
+    |
+    v
+fields / parse / filter / jsonParse  (pre-aggregation, any order, repeatable)
+    |                            |
+    |                            +---> relevantfields (requires where clause;
+    |                            |       only @message/auto-discovered fields)
+    |                            |
+    |                            +---> pattern --> diff (diff only after pattern)
+    |                            |
+    |                            +---> addtotals (after fields; unreliable after stats...by)
+    |
+    v
+stats ... by  (aggregation; chainable up to 10x Standard / 2x IA)
+    |
+    v
+filter (post-aggregation: filters on aggregated aliases, acts as HAVING equivalent)
+    |
+    v
+sort --> dedup (sort MUST precede dedup; dedup followed by sort = syntax error)
+    |
+    v
+limit / display  (post-aggregation, after final stats/sort)
+
+Parallel pipeline (join):
+    main pipeline --+--> join @field [ SOURCE '...' | ... ] as alias
+                    |
+                    +--> display main.field, alias.field
+```
+
+> **Note:** This diagram covers the complete command set. Commands not shown here (`expand`, `unnest`) have restrictions -- see Ordering Constraints below.
+
+### Ordering Constraints
+
+| Rule | Detail |
+|------|--------|
+| **`filterIndex` recommended first** | `filterIndex` is syntactically accepted at any position in the pipeline, but placing it first is strongly recommended for maximum scan reduction. When placed later, the scan-reduction benefit may be reduced or lost. |
+| **`fields` / `parse` / `filter` before `stats`** | These pre-aggregation commands can appear in any order and repeat, but must come before the first `stats`. |
+| **`stats` can chain** | Multiple `stats` commands can follow each other. Each subsequent `stats` only sees fields produced by the previous one. Standard log class allows up to 10 chained `stats`; Infrequent Access allows up to 2. |
+| **`sort` before `dedup`** | `dedup` cannot be followed by `sort` (syntax error). Correct order: `sort` then `dedup`. |
+| **`diff` only after `pattern`** | The `diff` command is only valid immediately after a `pattern` command (e.g., `pattern @message \| diff`). |
+| **`pattern` is pre-aggregation** | `pattern` auto-clusters log messages. It sits in the pre-aggregation stage and can be followed by `diff` for time-period comparison. |
+| **`relevantfields` restrictions** | Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields -- `parse`-created fields are not supported. |
+| **`addtotals` after `fields`** | Adds a `Total` column. Works after `fields` but may not produce visible totals after `stats ... by`. |
+| **`jsonParse` dot access requires separate command** | Dot access on a `jsonParse` result cannot be in the same `fields` command; split into two `fields` commands. |
+| **`join` mid-pipeline** | `join` can appear after pre-aggregation commands. The sub-pipeline in brackets has its own `SOURCE`, `fields`, `parse`, `filter` chain. |
+| **`expand`/`unnest` limitations** | Neither command flattens a `split()` result. `unnest` on `split()` raises `MalformedQueryException`. |
+| **`sort` / `limit` / `display` after final `stats`** | Post-aggregation formatting commands come at the end of the pipeline, after the last `stats`. |
+| **`filter` after `stats` acts as HAVING** | `filter` placed after `stats` filters on aggregated aliases (e.g., `stats count(*) as c by svc \| filter c > 5`). This is the standard way to perform post-aggregation filtering in Logs Insights QL. |
+
+### Example: Full Valid Pipeline
+
+```
+filterIndex accountId = '123456789012'
+| fields @timestamp, @message
+| parse @message /latency=(?<latency>\d+)/
+| filter latency > 500
+| stats avg(latency) as avgLatency, count(*) as cnt by bin(5m)
+| stats max(avgLatency) as peakLatency by bin(1h)
+| sort peakLatency desc
+| dedup peakLatency
+| limit 20
+```
+
+### Post-Aggregation Filtering (HAVING Equivalent)
+
+Logs Insights QL supports post-aggregation filtering by placing `filter` after `stats`. This works as a `HAVING` equivalent: the `filter` operates on the aliases produced by `stats`.
+
+**Standard pattern: `stats ... by <group> | filter <aggAlias> <op> <val>`**
+
+```
+# Show only log streams with more than 3 events
+stats count(*) as c by @logStream
+| filter c > 3
+
+# Show services with average latency above 200ms
+filter ispresent(duration)
+| stats avg(duration) as avgLatency by service
+| filter avgLatency > 200
+
+# Show time buckets where error rate exceeds threshold
+filter @message like /(?i)error/
+| stats count(*) as errors by bin(5m)
+| filter errors > 50
+| sort errors desc
+```
+
+**Key points:**
+- The `filter` after `stats` can reference any alias defined in the preceding `stats` command
+- You can combine it with `sort` and `limit` for further refinement (e.g., `| filter c > 3 | sort c desc | limit 10`)
+- Multiple conditions work: `| filter errors > 10 and avgLatency > 100`
 
 ## Optimization Best Practices
 - **Always cap results** with `limit` (50–100 typical) to control cost and avoid overwhelming output/agent context
@@ -188,3 +279,121 @@ WHERE status >= 500 GROUP BY service;
 - **Time format** — APIs expect ISO 8601 with timezone (e.g., `2026-06-10T10:00:00+00:00`)
 - **Regex escaping** — wrap patterns in `/.../` and escape special characters
 - **Overly wide time ranges** — slow and expensive
+
+## AI Generation Anti-patterns
+
+Common mistakes AI models make when generating CloudWatch Logs queries, and how to fix them.
+
+### 1. Passing `parse`-created fields to `relevantfields`
+
+**Mistake:**
+```
+parse @message /user=(?<userId>\w+)/
+| relevantfields userId where userId like /admin/
+```
+
+**Why it is wrong:** `relevantfields` only accepts `@message` and auto-discovered (`@`-prefixed) fields. Fields created by `parse` are not supported.
+
+**Correct approach:**
+```
+relevantfields @message where @message like /admin/
+```
+
+---
+
+### 2. Using PPL/SQL for Infrequent Access log groups
+
+**Mistake:**
+```
+-- PPL query targeting an IA log group
+source = `my-ia-log-group`
+| where status >= 500
+```
+
+**Why it is wrong:** Infrequent Access log class only supports Logs Insights QL. OpenSearch PPL and SQL are limited to Standard log class.
+
+**Correct approach:**
+```
+fields @timestamp, @message
+| filter status >= 500
+```
+Use Logs Insights QL syntax when the target log group is Infrequent Access.
+
+---
+
+### 3. Using `bin(300s)` instead of `bin(5m)`
+
+**Mistake:**
+```
+stats count(*) as cnt by bin(300s)
+```
+
+**Why it is wrong:** The `bin()` function caps each time unit at its natural maximum: seconds cap at 60. `bin(300s)` is silently clamped to `bin(60s)`, producing unexpected bucket sizes.
+
+**Correct approach:**
+```
+stats count(*) as cnt by bin(5m)
+```
+Use the appropriate larger unit (minutes, hours) instead of large values of smaller units.
+
+---
+
+### 4. Placing `sort` after `dedup`
+
+**Mistake:**
+```
+fields @timestamp, @message, service
+| dedup service
+| sort @timestamp desc
+```
+
+**Why it is wrong:** `dedup` cannot be followed by `sort` -- this produces a syntax error. The correct order is `sort` first, then `dedup`.
+
+**Correct approach:**
+```
+fields @timestamp, @message, service
+| sort @timestamp desc
+| dedup service
+```
+
+---
+
+### 5. Using `unnest` on a `split()` result
+
+**Mistake:**
+```
+fields @message
+| parse @message /tags=(?<tags>[^;]+)/
+| fields split(tags, ",") as tagArray
+| unnest tagArray
+```
+
+**Why it is wrong:** `unnest` on a `split()` result raises a `MalformedQueryException`. The `unnest` and `expand` commands do not support flattening arrays produced by `split()`.
+
+**Correct approach:**
+```
+fields @message
+| parse @message /tags=(?<tags>[^;]+)/
+| parse tags /(?<tag1>[^,]+),?(?<tag2>[^,]+)?/
+| filter ispresent(tag1)
+| display tag1, tag2
+```
+Use multiple `parse` commands with regex capture groups to extract individual values from a delimited string, or filter against the original string using `like`/regex (e.g., `filter tags like /my-tag/`).
+
+---
+
+### 6. Using dot access on `jsonParse` in the same `fields` command
+
+**Mistake:**
+```
+fields jsonParse(@message) as parsed, parsed.userId, parsed.action
+```
+
+**Why it is wrong:** Dot access on a `jsonParse` result cannot be used in the same `fields` command where `jsonParse` is called. The parsed object is not available until the next command in the pipeline.
+
+**Correct approach:**
+```
+fields jsonParse(@message) as parsed
+| fields parsed.userId, parsed.action, @timestamp
+```
+Split into two separate `fields` commands so the parsed object is available for dot access.

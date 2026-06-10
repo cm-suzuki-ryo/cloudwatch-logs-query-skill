@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-002",
+  "type": "docs",
+  "description": "Address review feedback: fix redundant ordering coverage, incomplete pipeline diagram, anti-pattern #1 fix, dedup placement, and having-equivalent pattern",
+  "status": "completed",
+  "steps": [
+    "Consolidate redundant ordering coverage between 'Command Pipeline Ordering Rules' and 'Command Ordering & Gotchas' sections",
+    "Expand the pipeline diagram to include missing commands (dedup, pattern, diff, join, relevantfields, addtotals, expand/unnest)",
+    "Fix anti-pattern #1's correct approach to properly address filtering after stats",
+    "Clarify dedup placement in the pipeline diagram",
+    "Add a having-equivalent pattern section documenting the canonical workaround for post-aggregation filtering"
+  ],
+  "acceptance_criteria": [
+    "No redundant ordering rules between the two sections - each rule appears in exactly one authoritative location",
+    "Pipeline diagram accounts for all commands documented in the file or has explicit scoping notes",
+    "Anti-pattern #1 shows a correct and useful workaround for the 'filter after stats' problem",
+    "dedup placement is clear in the pipeline diagram",
+    "A having-equivalent pattern is explicitly documented with a working example"
+  ],
+  "verification": [
+    "Read cloudwatch-logs-query-builder.skill.md and confirm all 5 review issues are addressed"
+  ],
+  "blocked_reason": null,
+  "findings": "All 5 review issues addressed. ADDITIONAL FIX (PR review feedback, 2nd round): Corrected factual errors discovered via hands-on testing: (1) filter CAN be used after stats as HAVING equivalent; (2) filterIndex is accepted at any position (first is recommended for scan reduction); (3) Removed incorrect anti-pattern #1 and workarounds WA1-WA3; (4) Rewrote Post-Aggregation Filtering section to document post-stats filter as standard approach."
+}
