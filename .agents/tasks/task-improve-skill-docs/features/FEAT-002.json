@@ -21,5 +21,5 @@
     "Read cloudwatch-logs-query-builder.skill.md and confirm all 5 review issues are addressed"
   ],
   "blocked_reason": null,
-  "findings": "All 5 review issues addressed: (1) Removed redundant 'Command Ordering & Gotchas' section and merged all rules into the Ordering Constraints table; (2) Expanded pipeline diagram to show dedup, pattern, diff, join, relevantfields, addtotals with proper placement; (3) Fixed anti-pattern #1 with honest explanation of no HAVING equivalent and sort desc + limit as workaround; (4) Added dedup to pipeline diagram with explicit 'sort MUST precede dedup' notation; (5) Added full 'Post-Aggregation Filtering' subsection with 3 workarounds."
+  "findings": "All 5 review issues addressed. ADDITIONAL FIX (PR review feedback, 2nd round): Corrected factual errors discovered via hands-on testing: (1) filter CAN be used after stats as HAVING equivalent; (2) filterIndex is accepted at any position (first is recommended for scan reduction); (3) Removed incorrect anti-pattern #1 and workarounds WA1-WA3; (4) Rewrote Post-Aggregation Filtering section to document post-stats filter as standard approach."
 }
