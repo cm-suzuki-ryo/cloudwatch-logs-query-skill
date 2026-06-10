@@ -172,7 +172,7 @@ Logs Insights QL uses a pipe-separated pipeline. Each command feeds its output t
 ### Valid Pipeline Flow
 
 ```
-filterIndex (must be first if present)
+filterIndex (recommended first for scan reduction; accepted at any position)
     |
     v
 fields / parse / filter / jsonParse  (pre-aggregation, any order, repeatable)
@@ -186,6 +186,9 @@ fields / parse / filter / jsonParse  (pre-aggregation, any order, repeatable)
     |
     v
 stats ... by  (aggregation; chainable up to 10x Standard / 2x IA)
+    |
+    v
+filter (post-aggregation: filters on aggregated aliases, acts as HAVING equivalent)
     |
     v
 sort --> dedup (sort MUST precede dedup; dedup followed by sort = syntax error)
@@ -205,7 +208,7 @@ Parallel pipeline (join):
 
 | Rule | Detail |
 |------|--------|
-| **`filterIndex` is always first** | If present, it must be the opening command of the pipeline. No other command may precede it. |
+| **`filterIndex` recommended first** | `filterIndex` is syntactically accepted at any position in the pipeline, but placing it first is strongly recommended for maximum scan reduction. When placed later, the scan-reduction benefit may be reduced or lost. |
 | **`fields` / `parse` / `filter` before `stats`** | These pre-aggregation commands can appear in any order and repeat, but must come before the first `stats`. |
 | **`stats` can chain** | Multiple `stats` commands can follow each other. Each subsequent `stats` only sees fields produced by the previous one. Standard log class allows up to 10 chained `stats`; Infrequent Access allows up to 2. |
 | **`sort` before `dedup`** | `dedup` cannot be followed by `sort` (syntax error). Correct order: `sort` then `dedup`. |
@@ -217,7 +220,7 @@ Parallel pipeline (join):
 | **`join` mid-pipeline** | `join` can appear after pre-aggregation commands. The sub-pipeline in brackets has its own `SOURCE`, `fields`, `parse`, `filter` chain. |
 | **`expand`/`unnest` limitations** | Neither command flattens a `split()` result. `unnest` on `split()` raises `MalformedQueryException`. |
 | **`sort` / `limit` / `display` after final `stats`** | Post-aggregation formatting commands come at the end of the pipeline, after the last `stats`. |
-| **No `HAVING` equivalent** | Logs Insights QL cannot filter rows after `stats`. See the "Post-Aggregation Filtering" pattern below for workarounds. |
+| **`filter` after `stats` acts as HAVING** | `filter` placed after `stats` filters on aggregated aliases (e.g., `stats count(*) as c by svc \| filter c > 5`). This is the standard way to perform post-aggregation filtering in Logs Insights QL. |
 
 ### Example: Full Valid Pipeline
 
@@ -233,42 +236,33 @@ filterIndex accountId = '123456789012'
 | limit 20
 ```
 
-### Post-Aggregation Filtering (No HAVING Equivalent)
+### Post-Aggregation Filtering (HAVING Equivalent)
 
-Logs Insights QL has no `HAVING` clause. You cannot use `filter` after `stats` to exclude aggregated rows. Use these workarounds:
+Logs Insights QL supports post-aggregation filtering by placing `filter` after `stats`. This works as a `HAVING` equivalent: the `filter` operates on the aliases produced by `stats`.
 
-**Workaround 1: Sort descending + limit (most common)**
-
-When you want "top N groups by count," sort descending and limit. Low-count groups end up at the bottom or are excluded by the limit:
+**Standard pattern: `stats ... by <group> | filter <aggAlias> <op> <val>`**
 
 ```
-stats count(*) as errors by service
-| sort errors desc
-| limit 10
-```
+# Show only log streams with more than 3 events
+stats count(*) as c by @logStream
+| filter c > 3
 
-**Workaround 2: Chained stats to narrow results**
+# Show services with average latency above 200ms
+filter ispresent(duration)
+| stats avg(duration) as avgLatency by service
+| filter avgLatency > 200
 
-Use a second `stats` that re-aggregates only the metric you care about, effectively discarding groups that don't meet a threshold. For example, to find services with high error rates, compute a ratio and then aggregate only those above a threshold pattern:
-
-```
+# Show time buckets where error rate exceeds threshold
 filter @message like /(?i)error/
-| stats count(*) as errors by service
-| stats sum(errors) as totalErrors, count(*) as serviceCount
-```
-
-**Workaround 3: Pre-filter to approximate thresholds**
-
-If you know the approximate volume, tighten the pre-aggregation `filter` or narrow the time range so that only high-volume groups survive:
-
-```
-filter @message like /(?i)error/ and service = "critical-service"
-| stats count(*) as errors by operation
+| stats count(*) as errors by bin(5m)
+| filter errors > 50
 | sort errors desc
-| limit 20
 ```
 
-**Key takeaway:** Always design queries knowing that post-`stats` filtering is impossible. Structure the pipeline so that `sort desc | limit N` gives you the meaningful subset.
+**Key points:**
+- The `filter` after `stats` can reference any alias defined in the preceding `stats` command
+- You can combine it with `sort` and `limit` for further refinement (e.g., `| filter c > 3 | sort c desc | limit 10`)
+- Multiple conditions work: `| filter errors > 10 and avgLatency > 100`
 
 ## Optimization Best Practices
 - **Always cap results** with `limit` (50–100 typical) to control cost and avoid overwhelming output/agent context
@@ -290,27 +284,7 @@ filter @message like /(?i)error/ and service = "critical-service"
 
 Common mistakes AI models make when generating CloudWatch Logs queries, and how to fix them.
 
-### 1. Placing `filter` after `stats`
-
-**Mistake:**
-```
-stats count(*) as errors by service
-| filter errors > 10
-```
-
-**Why it is wrong:** After a `stats` command, only `stats`, `sort`, `limit`, and `display` are valid. `filter` is a pre-aggregation command and cannot appear after `stats`. Logs Insights QL has no `HAVING` equivalent.
-
-**Correct approach:**
-```
-stats count(*) as errors by service
-| sort errors desc
-| limit 10
-```
-Since post-aggregation filtering is impossible in Logs Insights QL, use `sort desc | limit N` to surface only the highest-count groups. If you need a hard threshold cutoff, consider narrowing the pre-aggregation `filter` or time range so that low-count groups are excluded before aggregation. See "Post-Aggregation Filtering" in the Command Pipeline Ordering Rules section for detailed workarounds.
-
----
-
-### 2. Passing `parse`-created fields to `relevantfields`
+### 1. Passing `parse`-created fields to `relevantfields`
 
 **Mistake:**
 ```
@@ -327,7 +301,7 @@ relevantfields @message where @message like /admin/
 
 ---
 
-### 3. Using PPL/SQL for Infrequent Access log groups
+### 2. Using PPL/SQL for Infrequent Access log groups
 
 **Mistake:**
 ```
@@ -347,7 +321,7 @@ Use Logs Insights QL syntax when the target log group is Infrequent Access.
 
 ---
 
-### 4. Using `bin(300s)` instead of `bin(5m)`
+### 3. Using `bin(300s)` instead of `bin(5m)`
 
 **Mistake:**
 ```
@@ -364,7 +338,7 @@ Use the appropriate larger unit (minutes, hours) instead of large values of smal
 
 ---
 
-### 5. Placing `sort` after `dedup`
+### 4. Placing `sort` after `dedup`
 
 **Mistake:**
 ```
@@ -384,7 +358,7 @@ fields @timestamp, @message, service
 
 ---
 
-### 6. Using `unnest` on a `split()` result
+### 5. Using `unnest` on a `split()` result
 
 **Mistake:**
 ```
@@ -408,7 +382,7 @@ Use multiple `parse` commands with regex capture groups to extract individual va
 
 ---
 
-### 7. Using dot access on `jsonParse` in the same `fields` command
+### 6. Using dot access on `jsonParse` in the same `fields` command
 
 **Mistake:**
 ```
