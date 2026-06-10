@@ -1,5 +1,7 @@
 # CloudWatch Logs Query Builder Skill
 
+> **Verification Policy:** This skill contains ONLY patterns verified against a live AWS environment. When updating, always run queries in a real environment before adding—even if the source is official AWS documentation. Remove any content confirmed to be broken or misleading.
+
 ## Description
 Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands, and functions for all 3 query languages (Logs Insights QL, OpenSearch PPL, OpenSearch SQL) and generates optimal queries based on user requirements.
 
@@ -60,6 +62,26 @@ SELECT `@timestamp`, `@message` FROM `LogGroup`
 WHERE `@message` LIKE '%error%' OR `@message` LIKE '%exception%'
 ORDER BY `@timestamp` DESC LIMIT 100;
 ```
+
+### Time Filtering within Query
+```
+# Relative time — last 2 hours (now() returns epoch SECONDS, toMillis() returns MILLISECONDS)
+fields @timestamp, @message
+| filter toMillis(@timestamp) >= (now() * 1000 - 7200000)
+| sort @timestamp desc
+| limit 100
+
+# Absolute time — epoch milliseconds
+fields @timestamp, @message
+| filter toMillis(@timestamp) > 1718020800000
+| sort @timestamp desc
+| limit 100
+```
+- Primary time range: always set via console UI time selector or API `startTime`/`endTime` (biggest cost lever)
+- In-query narrowing: use `toMillis(@timestamp)` with epoch milliseconds for further filtering
+- `now()` returns epoch **seconds** — multiply by 1000 to compare with `toMillis()` (which returns ms)
+- `ago()` does NOT exist — `filter @timestamp > ago(30m)` raises `MalformedQueryException`
+- ISO 8601 string comparison does NOT work — `filter @timestamp > '2024-01-01T00:00:00Z'` silently returns 0 results
 
 ### Aggregation by Time Bucket
 ```
@@ -315,7 +337,7 @@ filter @message like /(?i)error/
 - **Missing `limit`** — queries can return massive result sets
 - **Not checking field existence** — use `ispresent(field)` before filtering/aggregating on optional fields
 - **Case sensitivity** — field names and regex are case-sensitive; use `/(?i).../` for case-insensitive regex
-- **Time format** — APIs expect ISO 8601 with timezone (e.g., `2026-06-10T10:00:00+00:00`)
+- **Time format** — `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
 - **Regex escaping** — wrap patterns in `/.../` and escape special characters
 - **Overly wide time ranges** — slow and expensive
 
