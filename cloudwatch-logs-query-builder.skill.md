@@ -24,6 +24,7 @@ Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands,
 - Need to parse structured formats inline (`logfmt`, `csv`) or chained JSON extraction
 - Need hashing (`md5`, `sha256`) to group/anonymize values
 - Querying Infrequent Access log class
+- Need cross-log-group `join` (inner/left) or `filter ... in (subquery)` with pipe syntax
 
 ### Use OpenSearch PPL when:
 - Familiar with Unix pipe syntax
@@ -35,7 +36,7 @@ Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands,
 ### Use OpenSearch SQL when:
 - Familiar with SQL
 - Need window functions (RANK, LAG, LEAD)
-- Need complex JOINs or subqueries
+- Need standard SQL JOIN syntax (all 3 languages support JOIN; SQL is best for complex multi-table patterns)
 - Need CAST / type conversion
 
 ## Query Patterns
@@ -116,13 +117,22 @@ filter @message like /(?i)error/
 
 ### Cross Log Group Join
 ```
-# Logs Insights QL
-fields @timestamp, @message
-| join @requestId [
-    SOURCE '/aws/lambda/other-function'
-    | fields @requestId, status
-] as other
-| display @timestamp, @message, other.status
+# Logs Insights QL — inner join
+fields @timestamp, requestId, endpoint, status
+| join type=inner left=app right=auth
+    where app.requestId=auth.requestId
+    (SOURCE '/aws/lambda/auth-service')
+| fields app.requestId, app.endpoint, app.status, auth.authResult
+| sort app.status desc
+| limit 50
+
+# Logs Insights QL — left join (retain unmatched left records)
+fields @timestamp, requestId, endpoint, status
+| join type=left left=order right=payment
+    where order.transactionId=payment.transactionId
+    (SOURCE '/aws/lambda/payment-service')
+| filter !ispresent(payment.paymentStatus) or payment.paymentStatus != "SUCCESS"
+| fields order.transactionId, order.orderId, payment.paymentStatus
 
 # PPL
 LEFT JOIN left=l, right=r ON l.requestId = r.requestId `other-log-group`
@@ -132,6 +142,31 @@ LEFT JOIN left=l, right=r ON l.requestId = r.requestId `other-log-group`
 SELECT A.`@message`, B.status
 FROM `LogGroupA` as A
 INNER JOIN `LogGroupB` as B ON A.requestId = B.requestId;
+```
+
+### Subquery (Filter with Intermediate Results)
+```
+# Logs Insights QL — filter by values from another log group
+filter requestId in (
+    SOURCE '/aws/lambda/auth-service'
+    | filter authResult = "FAILED"
+    | fields requestId
+)
+| fields @timestamp, requestId, endpoint, status
+| sort @timestamp desc
+| limit 50
+
+# Logs Insights QL — subquery with stats aggregation
+filter requestId in (
+    SOURCE '/aws/lambda/payment-service'
+    | filter status = "FAILED"
+    | stats count(*) as failureCount by requestId
+    | filter failureCount > 3
+    | fields requestId
+)
+| fields @timestamp, requestId, customerId, amount
+| sort @timestamp asc
+| limit 50
 ```
 
 ### Reduce Scan with Field Indexes
@@ -164,6 +199,9 @@ WHERE status >= 500 GROUP BY service;
 - `earliest(field)`/`latest(field)` return epoch **milliseconds** — convert with `fromMillis()`
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
+- `join` supports only equality (`=`) conditions, max 1 join per query, max 50,000 unique keys on right side; subqueries on right side are not supported
+- `filter field in (subquery)` — subquery runs independently (max 30s); nested/correlated subqueries are not supported
+- When using `join` or subquery with `SOURCE`, select ONLY the primary log group in console; selecting both causes `ServiceUnavailableException`
 
 ## Command Ordering & Gotchas (verified)
 - `relevantfields` requires a `where` clause and does **not** accept `parse`-created fields — use `@message`/auto-discovered fields: `relevantfields @message where @message like /GET/`
