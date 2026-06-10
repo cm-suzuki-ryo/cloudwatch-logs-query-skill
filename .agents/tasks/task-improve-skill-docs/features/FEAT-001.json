@@ -1,0 +1,24 @@
+{
+  "id": "FEAT-001",
+  "type": "docs",
+  "description": "Add Command Pipeline Ordering Rules section and AI Generation Anti-patterns section to the skill file, and add version information to the knowledge base reference file",
+  "status": "in_progress",
+  "steps": [
+    "Add a new ## Command Pipeline Ordering Rules section to cloudwatch-logs-query-builder.skill.md, placed BEFORE the existing '## Command Ordering & Gotchas (verified)' section. This new section should clearly document the valid pipeline order for Logs Insights QL commands in a structured format (table or ordered list with explanations). Key constraints to document: (1) filterIndex must be at the beginning of any pipeline, (2) fields/parse/filter come before stats, (3) stats can be chained (up to 10 on Standard, 2 on IA), (4) sort cannot follow dedup (must be sort then dedup), (5) diff only works after pattern, (6) sort/limit/display come after the final stats. Include a visual representation of the valid ordering if possible (e.g., an ASCII diagram or ordered list showing which commands can follow which).",
+    "Add a new ## AI Generation Anti-patterns section to cloudwatch-logs-query-builder.skill.md, placed AFTER the existing '## Common Pitfalls' section. This section should document mistakes AI models commonly make when generating CloudWatch Logs queries. Each anti-pattern should include: the mistake, why it is wrong, and the correct approach. Anti-patterns to document: (1) Placing filter after stats (only stats/sort/limit valid after stats), (2) Passing parse-created fields to relevantfields (only @message/auto-discovered fields supported), (3) Using PPL/SQL for Infrequent Access log groups (only Logs Insights QL is supported for IA), (4) Using bin(300s) instead of bin(5m) (time units are capped at 60 for seconds), (5) Placing sort after dedup (syntax error - must be sort then dedup), (6) Using unnest on split() result (causes MalformedQueryException - use expand instead or restructure), (7) Using dot access on jsonParse result in the same fields command (must split into two fields commands).",
+    "Add a 'Last verified: 2026-06' line at the very top of cloudwatch-logs-query-languages-reference.md, just below the # heading. This should be a simple metadata line indicating when the content was last verified against AWS documentation."
+  ],
+  "acceptance_criteria": [
+    "cloudwatch-logs-query-builder.skill.md contains a new 'Command Pipeline Ordering Rules' section with clear documentation of valid command ordering",
+    "cloudwatch-logs-query-builder.skill.md contains a new 'AI Generation Anti-patterns' section with at least 7 documented anti-patterns",
+    "cloudwatch-logs-query-languages-reference.md has a 'Last verified: 2026-06' notation near the top of the file",
+    "All new content follows the existing markdown formatting conventions (## headings, bold text for emphasis, code backticks for command names)",
+    "No existing content is removed or broken"
+  ],
+  "verification": [
+    "Read cloudwatch-logs-query-builder.skill.md and confirm both new sections are present and well-formatted",
+    "Read cloudwatch-logs-query-languages-reference.md and confirm the version date is present at the top"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

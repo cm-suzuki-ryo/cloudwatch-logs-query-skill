@@ -165,6 +165,49 @@ WHERE status >= 500 GROUP BY service;
 - SQL/PPL supports Standard Log Class only
 - SOURCE/source command is CLI/API only (not available in console)
 
+## Command Pipeline Ordering Rules
+
+Logs Insights QL uses a pipe-separated pipeline. Each command feeds its output to the next. The following rules define valid ordering.
+
+### Valid Pipeline Flow
+
+```
+filterIndex (must be first if present)
+    |
+    v
+fields / parse / filter  (pre-aggregation, any order, repeatable)
+    |
+    v
+stats ... by  (aggregation; chainable up to 10x Standard / 2x IA)
+    |
+    v
+sort / limit / display  (post-aggregation, after final stats)
+```
+
+### Ordering Constraints
+
+| Rule | Detail |
+|------|--------|
+| **`filterIndex` is always first** | If present, it must be the opening command of the pipeline. No other command may precede it. |
+| **`fields` / `parse` / `filter` before `stats`** | These pre-aggregation commands can appear in any order and repeat, but must come before the first `stats`. |
+| **`stats` can chain** | Multiple `stats` commands can follow each other. Each subsequent `stats` only sees fields produced by the previous one. Standard log class allows up to 10 chained `stats`; Infrequent Access allows up to 2. |
+| **`sort` before `dedup`** | `dedup` cannot be followed by `sort` (syntax error). Correct order: `sort` then `dedup`. |
+| **`diff` only after `pattern`** | The `diff` command is only valid immediately after a `pattern` command. |
+| **`sort` / `limit` / `display` after final `stats`** | Post-aggregation formatting commands come at the end of the pipeline, after the last `stats`. |
+
+### Example: Full Valid Pipeline
+
+```
+filterIndex accountId = '123456789012'
+| fields @timestamp, @message
+| parse @message /latency=(?<latency>\d+)/
+| filter latency > 500
+| stats avg(latency) as avgLatency, count(*) as cnt by bin(5m)
+| stats max(avgLatency) as peakLatency by bin(1h)
+| sort peakLatency desc
+| limit 20
+```
+
 ## Command Ordering & Gotchas (verified)
 - `relevantfields` requires a `where` clause and does **not** accept `parse`-created fields — use `@message`/auto-discovered fields: `relevantfields @message where @message like /GET/`
 - `dedup` cannot be followed by `sort` (syntax error) — order as `sort` → `dedup`
@@ -188,3 +231,132 @@ WHERE status >= 500 GROUP BY service;
 - **Time format** — APIs expect ISO 8601 with timezone (e.g., `2026-06-10T10:00:00+00:00`)
 - **Regex escaping** — wrap patterns in `/.../` and escape special characters
 - **Overly wide time ranges** — slow and expensive
+
+## AI Generation Anti-patterns
+
+Common mistakes AI models make when generating CloudWatch Logs queries, and how to fix them.
+
+### 1. Placing `filter` after `stats`
+
+**Mistake:**
+```
+stats count(*) as errors by service
+| filter errors > 10
+```
+
+**Why it is wrong:** After a `stats` command, only `stats`, `sort`, `limit`, and `display` are valid. `filter` is a pre-aggregation command and cannot appear after `stats`.
+
+**Correct approach:**
+```
+stats count(*) as errors by service
+| sort errors desc
+```
+Apply filtering conditions before `stats`, or use a chained `stats` to narrow results.
+
+---
+
+### 2. Passing `parse`-created fields to `relevantfields`
+
+**Mistake:**
+```
+parse @message /user=(?<userId>\w+)/
+| relevantfields userId where userId like /admin/
+```
+
+**Why it is wrong:** `relevantfields` only accepts `@message` and auto-discovered (`@`-prefixed) fields. Fields created by `parse` are not supported.
+
+**Correct approach:**
+```
+relevantfields @message where @message like /admin/
+```
+
+---
+
+### 3. Using PPL/SQL for Infrequent Access log groups
+
+**Mistake:**
+```
+-- PPL query targeting an IA log group
+source = `my-ia-log-group`
+| where status >= 500
+```
+
+**Why it is wrong:** Infrequent Access log class only supports Logs Insights QL. OpenSearch PPL and SQL are limited to Standard log class.
+
+**Correct approach:**
+```
+fields @timestamp, @message
+| filter status >= 500
+```
+Use Logs Insights QL syntax when the target log group is Infrequent Access.
+
+---
+
+### 4. Using `bin(300s)` instead of `bin(5m)`
+
+**Mistake:**
+```
+stats count(*) as cnt by bin(300s)
+```
+
+**Why it is wrong:** The `bin()` function caps each time unit at its natural maximum: seconds cap at 60. `bin(300s)` is silently clamped to `bin(60s)`, producing unexpected bucket sizes.
+
+**Correct approach:**
+```
+stats count(*) as cnt by bin(5m)
+```
+Use the appropriate larger unit (minutes, hours) instead of large values of smaller units.
+
+---
+
+### 5. Placing `sort` after `dedup`
+
+**Mistake:**
+```
+fields @timestamp, @message, service
+| dedup service
+| sort @timestamp desc
+```
+
+**Why it is wrong:** `dedup` cannot be followed by `sort` -- this produces a syntax error. The correct order is `sort` first, then `dedup`.
+
+**Correct approach:**
+```
+fields @timestamp, @message, service
+| sort @timestamp desc
+| dedup service
+```
+
+---
+
+### 6. Using `unnest` on a `split()` result
+
+**Mistake:**
+```
+fields @message
+| parse @message /tags=(?<tags>[^;]+)/
+| fields split(tags, ",") as tagArray
+| unnest tagArray
+```
+
+**Why it is wrong:** `unnest` on a `split()` result raises a `MalformedQueryException`. The `unnest` and `expand` commands do not support flattening arrays produced by `split()`.
+
+**Correct approach:** Restructure the query to avoid splitting into arrays. Use multiple `parse` commands to extract individual values, or filter using `like`/regex against the original string field.
+
+---
+
+### 7. Using dot access on `jsonParse` in the same `fields` command
+
+**Mistake:**
+```
+fields jsonParse(@message) as parsed, parsed.userId, parsed.action
+```
+
+**Why it is wrong:** Dot access on a `jsonParse` result cannot be used in the same `fields` command where `jsonParse` is called. The parsed object is not available until the next command in the pipeline.
+
+**Correct approach:**
+```
+fields jsonParse(@message) as parsed
+| fields parsed.userId, parsed.action, @timestamp
+```
+Split into two separate `fields` commands so the parsed object is available for dot access.
