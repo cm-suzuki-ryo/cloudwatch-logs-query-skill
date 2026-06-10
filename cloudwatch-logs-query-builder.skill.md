@@ -74,9 +74,8 @@ fields @timestamp, @message
 #### Tips
 - `now()` returns epoch **seconds** -- multiply by 1000 to compare with `toMillis()` (which returns ms)
 - `ago()` does NOT exist -- `filter @timestamp > ago(30m)` raises `MalformedQueryException`
-- ISO 8601 string comparison does NOT work -- `filter @timestamp > '2024-01-01T00:00:00Z'` silently returns 0 results
-- `earliest(field)`/`latest(field)` return epoch **milliseconds** -- convert with `fromMillis()`
 - `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
+- `earliest(field)`/`latest(field)` return epoch **milliseconds** -- convert with `fromMillis()`
 
 ---
 
@@ -101,6 +100,13 @@ where `@message` like "%error%" or `@message` like "%exception%"
 SELECT `@timestamp`, `@message` FROM `LogGroup`
 WHERE `@message` LIKE '%error%' OR `@message` LIKE '%exception%'
 ORDER BY `@timestamp` DESC LIMIT 100;
+```
+
+```
+# Trace a single request across streams
+filter @requestId = "abc-123-def"
+| fields @timestamp, @message, @logStream
+| sort @timestamp asc
 ```
 
 #### Tips
@@ -403,11 +409,6 @@ WHERE status >= 500 GROUP BY service;
 filter @message like /(?i)error/
 | dedup @message
 | limit 30
-
-# Trace a single request across streams
-filter @requestId = "abc-123-def"
-| fields @timestamp, @message, @logStream
-| sort @timestamp asc
 ```
 
 #### ⚠️ AI Generation Pitfall: Placing `sort` after `dedup`
@@ -516,7 +517,23 @@ Split into two separate `fields` commands so the parsed object is available for 
 
 ### SOURCE
 
-CLI/API only (not available in console).
+CLI/API only (not available in console). Used to specify the target log group in `join` and subquery pipelines.
+
+#### Tips
+- `SOURCE` appears in the right side of `join` and inside `filter ... in (subquery)` to reference a different log group
+- When selecting log groups in the console for a `join`/subquery query, select ONLY the primary log group; the `SOURCE` in the query handles the secondary group
+
+#### Example
+
+```
+# Standalone usage (CLI/API only)
+SOURCE '/aws/lambda/my-function'
+| fields @timestamp, @message
+| filter @message like /(?i)error/
+| limit 50
+```
+
+See also: [JOIN examples](#join) and [Subquery examples](#サブクエリ-subquery) for `SOURCE` usage in multi-log-group queries.
 
 ---
 
