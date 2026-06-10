@@ -42,8 +42,8 @@ CloudWatch automatically discovers these fields:
 | `unmask` | Show masked content (data protection) |
 | `unnest` | Flatten a list into multiple records. Use on native arrays (e.g., from `jsonParse`). NOTE: a `split()` result raises `MalformedQueryException` |
 | `lookup` | Enrich events with lookup table data |
-| `join` | Combine events from different log groups by matching field |
-| `subqueries` | Nested queries as input to another query |
+| `join` | Combine events from different log groups by matching field (see JOIN syntax below) |
+| `subqueries` | Nested queries as filter input via `filter field in (subquery)` (see Subquery syntax below) |
 | `addtotals` | Add a row-total column (default name `Total`) summing all numeric fields in the query; `addtotals fieldname=RowSum` renames it. Works after `fields`. NOTE: after `stats ... by`, the total column may not appear (the `by` field is treated as non-numeric). `col=true` adds a column-total row (console UI only) |
 | `SOURCE` | Specify log groups (CLI/API only, not console) by prefix, account, class, data source, or tags |
 
@@ -292,6 +292,101 @@ parse @message /(?<payload>\{.*\})/ as payload
 | json field=payload "user.name" as username
 | display username
 ```
+
+### JOIN Syntax
+
+Combines log events from two log groups using a shared key field.
+
+```
+fields @timestamp, requestId, endpoint, status
+| join type=<join_type> left=<left_alias> right=<right_alias>
+    where <left_alias>.<field>=<right_alias>.<field>
+    (SOURCE <right_log_group>)
+| fields <left_alias>.field1, <right_alias>.field2
+```
+
+**Parameters:**
+- `type` — `inner` (default) or `left`
+- `left` / `right` — aliases for the primary and secondary log groups
+- `where` — equality join condition using `alias.field` dot notation
+- `SOURCE` — the secondary (right) log group path
+
+**Example — inner join:**
+```
+fields @timestamp, requestId, endpoint, status
+| join type=inner left=app right=auth
+    where app.requestId=auth.requestId
+    (SOURCE '/aws/lambda/auth-service')
+| fields app.requestId, app.endpoint, app.status, auth.authResult, auth.authMethod
+| sort app.status desc
+| limit 50
+```
+
+**Example — left join (retain unmatched primary records):**
+```
+fields @timestamp, requestId, endpoint, status
+| join type=left left=order right=payment
+    where order.transactionId=payment.transactionId
+    (SOURCE '/aws/lambda/payment-service')
+| filter !ispresent(payment.paymentStatus) or payment.paymentStatus != "SUCCESS"
+| fields order.transactionId, order.orderId, payment.paymentStatus, payment.amount
+| limit 50
+```
+
+**Restrictions:**
+- Only equality (`=`) conditions are supported
+- Only one `join` command per query
+- Join keys must exist in both sources and be of compatible types
+- The number of unique key values in the secondary (right) source is limited to 50,000
+- Subqueries on the right side of join are not supported
+- The right side `SOURCE` cannot contain pipe operations (e.g., `fields`, `filter`) — only the log group path is allowed (Phase 1 limitation)
+- In the console, select ONLY the primary (left) log group; the right log group is specified via `SOURCE`. Selecting both causes `ServiceUnavailableException`
+
+### Subquery Syntax
+
+A subquery is a nested Logs Insights query used inside `filter ... in (...)` to dynamically generate filter values.
+
+```
+filter <field> in (
+    SOURCE '<other_log_group>'
+    | filter <condition>
+    | fields <field>
+)
+```
+
+**Example — filter by values from another log group:**
+```
+filter requestId in (
+    SOURCE '/aws/lambda/auth-service'
+    | filter authResult = "FAILED"
+    | fields requestId
+)
+| fields @timestamp, requestId, endpoint, status
+| sort @timestamp desc
+| limit 50
+```
+
+**Example — subquery with stats aggregation:**
+```
+filter requestId in (
+    SOURCE '/aws/lambda/payment-service'
+    | filter status = "FAILED"
+    | stats count(*) as failureCount by requestId
+    | filter failureCount > 3
+    | fields requestId
+)
+| fields @timestamp, requestId, customerId, amount, failureReason
+| sort @timestamp asc
+| limit 50
+```
+
+**Restrictions:**
+- Subquery must produce exactly one output column (via `fields` or `stats`). Multiple fields cause `MalformedQueryException`
+- Nested subqueries are not supported
+- Correlated subqueries are not supported
+- Inner query execution is limited to 30 seconds
+- Only `filter ... in (subquery)` form is supported
+- In the console, select only the primary log group; the subquery's log group is specified via `SOURCE`
 
 ---
 
