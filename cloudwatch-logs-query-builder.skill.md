@@ -1,6 +1,6 @@
 # CloudWatch Logs Query Builder Skill
 
-> **Verification Policy:** This skill contains ONLY patterns verified against a live AWS environment. When updating, always run queries in a real environment before adding--even if the source is official AWS documentation. Remove any content confirmed to be broken or misleading.
+> **Verification Policy:** This skill contains ONLY patterns verified against a live AWS environment. When updating, always run queries in a real environment before adding—even if the source is official AWS documentation. Remove any content confirmed to be broken or misleading.
 
 ## Description
 Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands, and functions for all 3 query languages (Logs Insights QL, OpenSearch PPL, OpenSearch SQL) and generates optimal queries based on user requirements.
@@ -20,6 +20,8 @@ Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands,
 - **P2 標準** (高頻度): stats集計 | 時系列分析 | pattern/diff | display
 - **P3 応用** (特定用途): JOIN | サブクエリ | anomaly | filterIndex
 - **P4 特殊** (稀): dedup | expand/unnest | unmask | lookup | relevantfields | jsonParse | SOURCE | hashing
+
+※ AIクエリ生成における参照頻度順に分類
 
 ## Language Selection Guide
 
@@ -58,13 +60,13 @@ Primary time range: always set via console UI time selector or API `startTime`/`
 #### Examples
 
 ```
-# Relative time -- last 2 hours (now() returns epoch SECONDS, toMillis() returns MILLISECONDS)
+# Relative time — last 2 hours (now() returns epoch SECONDS, toMillis() returns MILLISECONDS)
 fields @timestamp, @message
 | filter toMillis(@timestamp) >= (now() * 1000 - 7200000)
 | sort @timestamp desc
 | limit 100
 
-# Absolute time -- epoch milliseconds
+# Absolute time — epoch milliseconds
 fields @timestamp, @message
 | filter toMillis(@timestamp) > 1718020800000
 | sort @timestamp desc
@@ -72,10 +74,10 @@ fields @timestamp, @message
 ```
 
 #### Tips
-- `now()` returns epoch **seconds** -- multiply by 1000 to compare with `toMillis()` (which returns ms)
-- `ago()` does NOT exist -- `filter @timestamp > ago(30m)` raises `MalformedQueryException`
+- `now()` returns epoch **seconds** — multiply by 1000 to compare with `toMillis()` (which returns ms)
+- `ago()` does NOT exist — `filter @timestamp > ago(30m)` raises `MalformedQueryException`
 - `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
-- `earliest(field)`/`latest(field)` return epoch **milliseconds** -- convert with `fromMillis()`
+- `earliest(field)`/`latest(field)` return epoch **milliseconds** — convert with `fromMillis()`
 
 ---
 
@@ -114,7 +116,7 @@ filter @requestId = "abc-123-def"
 - `strcontains` 3rd (case-insensitive) arg currently has no effect; `startsWith`/`endsWith` return `1`/`0`, not boolean
 - Not checking field existence: use `ispresent(field)` before filtering/aggregating on optional fields
 - Regex escaping: wrap patterns in `/.../` and escape special characters
-- `filter` after `stats` acts as HAVING -- filters on aggregated aliases (e.g., `stats count(*) as c by svc | filter c > 5`)
+- `filter` after `stats` acts as HAVING — filters on aggregated aliases (e.g., `stats count(*) as c by svc | filter c > 5`)
 
 #### ⚠️ AI Generation Pitfall: Using PPL/SQL for Infrequent Access log groups
 
@@ -141,6 +143,7 @@ Use Logs Insights QL syntax when the target log group is Infrequent Access.
 #### Tips
 - Backtick fields with special characters: `` `@message` ``, `` `Operation.Export` ``
 - `@`-prefixed fields are auto-discovered by CloudWatch
+- `relevantfields` はこの `@`-prefixed フィールドのみをサポート（P4 relevantfields セクション参照）
 
 ---
 
@@ -166,6 +169,8 @@ filter @type = "REPORT"
 | filter ispresent(initDuration)
 | stats count(*) as coldStarts, avg(initDuration) as avgInitMs by bin(1h)
 ```
+
+⚡ 常に limit を付与し、時間範囲を可能な限り狭めること（詳細は末尾 Optimization Best Practices 参照）
 
 ---
 
@@ -229,7 +234,7 @@ filter @message like /(?i)error/
 - Multiple conditions work: `| filter errors > 10 and avgLatency > 100`
 
 #### Tips
-- `stats` can be chained -- up to 10 commands on Standard log class, up to 2 on Infrequent Access; later `stats` only sees fields from the previous one
+- `stats` can be chained — up to 10 commands on Standard log class, up to 2 on Infrequent Access; later `stats` only sees fields from the previous one
 - SQL/PPL supports Standard Log Class only
 
 #### ⚠️ AI Generation Pitfall: Using `bin(300s)` instead of `bin(5m)`
@@ -260,7 +265,7 @@ Logs Insights QL only.
 filter @message like /(?i)error/
 | stats count_over_time(*) as errors by bin(1m) offset 5m
 
-# Latency distribution -- histogram is a `by`-clause grouping fn; 2nd arg is bucket WIDTH
+# Latency distribution — histogram is a `by`-clause grouping fn; 2nd arg is bucket WIDTH
 filter ispresent(duration)
 | stats count(*) as cnt by histogram(duration, 50)
 ```
@@ -268,7 +273,7 @@ filter ispresent(duration)
 #### Tips
 - `bin()` time unit caps: ms=1000, s/m=60, h=24. Use `bin(5m)` not `bin(300s)` (capped to 60s)
 - `count_over_time(*)`/`sum_over_time(field)` equal `count(*)`/`sum(field)`; `offset` shifts bin boundary alignment. `rate(field, period)` computes the per-period rate of change within each bin (returns 0 when the field is constant)
-- `histogram(field, width)` is a `by`-clause grouping function -- 2nd arg is bucket **width** (official docs say "number of buckets", but hands-on testing confirms width)
+- `histogram(field, width)` is a `by`-clause grouping function — 2nd arg is bucket **width** (official docs say "number of buckets", but hands-on testing confirms width)
 
 ---
 
@@ -286,6 +291,7 @@ filter ispresent(duration)
 
 #### Tips
 - `addtotals` after `fields`: adds a `Total` column. Works after `fields` but may not produce visible totals after `stats ... by`.
+- `display` は post-aggregation コマンド。`stats` や `sort` の後に配置すること。
 
 ---
 
@@ -296,7 +302,7 @@ filter ispresent(duration)
 #### Examples
 
 ```
-# Logs Insights QL -- inner join
+# Logs Insights QL — inner join
 fields @timestamp, requestId, endpoint, status
 | join type=inner left=app right=auth
     where app.requestId=auth.requestId
@@ -305,7 +311,7 @@ fields @timestamp, requestId, endpoint, status
 | sort app.status desc
 | limit 50
 
-# Logs Insights QL -- left join (retain unmatched left records)
+# Logs Insights QL — left join (retain unmatched left records)
 fields @timestamp, requestId, endpoint, status
 | join type=left left=order right=payment
     where order.transactionId=payment.transactionId
@@ -335,7 +341,7 @@ INNER JOIN `LogGroupB` as B ON A.requestId = B.requestId;
 #### Examples
 
 ```
-# Logs Insights QL -- filter by values from another log group
+# Logs Insights QL — filter by values from another log group
 filter requestId in (
     SOURCE '/aws/lambda/auth-service'
     | filter authResult = "FAILED"
@@ -345,7 +351,7 @@ filter requestId in (
 | sort @timestamp desc
 | limit 50
 
-# Logs Insights QL -- subquery with stats aggregation
+# Logs Insights QL — subquery with stats aggregation
 filter requestId in (
     SOURCE '/aws/lambda/payment-service'
     | filter status = "FAILED"
@@ -359,11 +365,13 @@ filter requestId in (
 ```
 
 #### Tips
-- `filter field in (subquery)` -- subquery runs independently (max 30s); must produce exactly one output column (via `fields` or `stats`); nested/correlated subqueries are not supported
+- `filter field in (subquery)` — subquery runs independently (max 30s); must produce exactly one output column (via `fields` or `stats`); nested/correlated subqueries are not supported
 
 ---
 
 ### anomaly
+
+> いつ使うか: ログパターンの異常検知を自動で行いたい場合（時系列データに対して有効）
 
 ML-based anomaly detection (Logs Insights QL only).
 
@@ -420,7 +428,7 @@ fields @timestamp, @message, service
 | sort @timestamp desc
 ```
 
-**Why it is wrong:** `dedup` cannot be followed by `sort` -- this produces a syntax error. The correct order is `sort` first, then `dedup`.
+**Why it is wrong:** `dedup` cannot be followed by `sort` — this produces a syntax error. The correct order is `sort` first, then `dedup`.
 
 **Correct approach:**
 ```
@@ -461,11 +469,15 @@ Use multiple `parse` commands with regex capture groups to extract individual va
 
 ### unmask
 
+> いつ使うか: データ保護でマスクされたフィールドを一時的に復元する必要がある場合
+
 Data protection mask removal.
 
 ---
 
 ### lookup
+
+> いつ使うか: 外部テーブル（CSV等）とログデータを結合する場合
 
 Lookup table join.
 
@@ -473,7 +485,7 @@ Lookup table join.
 
 ### relevantfields
 
-Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields -- `parse`-created fields are not supported.
+Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields — `parse`-created fields are not supported.
 
 #### ⚠️ AI Generation Pitfall: Passing `parse`-created fields to `relevantfields`
 
@@ -533,14 +545,14 @@ SOURCE '/aws/lambda/my-function'
 | limit 50
 ```
 
-See also: [JOIN examples](#join) and [Subquery examples](#サブクエリ-subquery) for `SOURCE` usage in multi-log-group queries.
+See also: P3 JOIN セクション および P3 サブクエリ (Subquery) セクション
 
 ---
 
 ### hashing (md5, sha256)
 
 #### Tips
-- Hashing functions (`md5`, `sha256`) work in `fields` and `filter` -- useful to bucket or anonymize high-cardinality values
+- Hashing functions (`md5`, `sha256`) work in `fields` and `filter` — useful to bucket or anonymize high-cardinality values
 
 ---
 
@@ -581,7 +593,7 @@ Parallel pipeline (join):
                     +--> display main.field, alias.field
 ```
 
-> **Note:** This diagram covers the complete command set. Commands not shown here (`expand`, `unnest`) have restrictions -- see Ordering Constraints below.
+> **Note:** This diagram covers the complete command set. Commands not shown here (`expand`, `unnest`) have restrictions — see Ordering Constraints below.
 
 ### Ordering Constraints
 
@@ -593,13 +605,13 @@ Parallel pipeline (join):
 | **`sort` before `dedup`** | `dedup` cannot be followed by `sort` (syntax error). Correct order: `sort` then `dedup`. |
 | **`diff` only after `pattern`** | The `diff` command is only valid immediately after a `pattern` command (e.g., `pattern @message \| diff`). |
 | **`pattern` is pre-aggregation** | `pattern` auto-clusters log messages. It sits in the pre-aggregation stage and can be followed by `diff` for time-period comparison. |
-| **`relevantfields` restrictions** | Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields -- `parse`-created fields are not supported. |
+| **`relevantfields` restrictions** | Requires a `where` clause. Only accepts `@message` and auto-discovered (`@`-prefixed) fields — `parse`-created fields are not supported. |
 | **`addtotals` after `fields`** | Adds a `Total` column. Works after `fields` but may not produce visible totals after `stats ... by`. |
 | **`jsonParse` dot access requires separate command** | Dot access on a `jsonParse` result cannot be in the same `fields` command; split into two `fields` commands. |
 | **`join` mid-pipeline** | `join` can appear after pre-aggregation commands. The sub-pipeline in brackets has its own `SOURCE`, `fields`, `parse`, `filter` chain. |
 | **`expand`/`unnest` limitations** | Neither command flattens a `split()` result. `unnest` on `split()` raises `MalformedQueryException`. |
 | **`sort` / `limit` / `display` after final `stats`** | Post-aggregation formatting commands come at the end of the pipeline, after the last `stats`. |
-| **`filter` after `stats` acts as HAVING** | `filter` placed after `stats` filters on aggregated aliases (e.g., `stats count(*) as c by svc \| filter c > 5`). This is the standard way to perform post-aggregation filtering in Logs Insights QL. |
+| **`filter` after `stats` acts as HAVING** | 詳細は P2 stats 集計セクションの Post-Aggregation Filtering を参照 |
 
 ### Example: Full Valid Pipeline
 
@@ -617,16 +629,16 @@ filterIndex accountId = '123456789012'
 
 ## Optimization Best Practices
 - **Always cap results** with `limit` (50-100 typical) to control cost and avoid overwhelming output/agent context
-- **Narrow the time range** as much as possible -- it is the biggest lever on scanned volume and cost
+- **Narrow the time range** as much as possible — it is the biggest lever on scanned volume and cost
 - **Use `filterIndex` / `aws:fieldIndex`** on indexed fields to skip non-matching log groups
 - **Parse JSON / extract fields early**, before filtering, so later commands operate on structured fields
 - **Discover log groups first** (and confirm field names) before building complex queries
-- **Build incrementally** -- start simple, verify, then add aggregations and joins
+- **Build incrementally** — start simple, verify, then add aggregations and joins
 
 ## Common Pitfalls
-- **Missing `limit`** -- queries can return massive result sets
-- **Not checking field existence** -- use `ispresent(field)` before filtering/aggregating on optional fields
-- **Case sensitivity** -- field names and regex are case-sensitive; use `/(?i).../` for case-insensitive regex
-- **Time format** -- `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
-- **Regex escaping** -- wrap patterns in `/.../` and escape special characters
-- **Overly wide time ranges** -- slow and expensive
+- **Missing `limit`** — queries can return massive result sets
+- **Not checking field existence** — use `ispresent(field)` before filtering/aggregating on optional fields
+- **Case sensitivity** — field names and regex are case-sensitive; use `/(?i).../` for case-insensitive regex
+- **Time format** — `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
+- **Regex escaping** — wrap patterns in `/.../` and escape special characters
+- **Overly wide time ranges** — slow and expensive
