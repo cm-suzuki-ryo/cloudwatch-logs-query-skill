@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "docs",
   "description": "Address review feedback: fix redundant ordering coverage, incomplete pipeline diagram, anti-pattern #1 fix, dedup placement, and having-equivalent pattern",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Consolidate redundant ordering coverage between 'Command Pipeline Ordering Rules' and 'Command Ordering & Gotchas' sections",
     "Expand the pipeline diagram to include missing commands (dedup, pattern, diff, join, relevantfields, addtotals, expand/unnest)",
@@ -21,5 +21,5 @@
     "Read cloudwatch-logs-query-builder.skill.md and confirm all 5 review issues are addressed"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 5 review issues addressed: (1) Removed redundant 'Command Ordering & Gotchas' section and merged all rules into the Ordering Constraints table; (2) Expanded pipeline diagram to show dedup, pattern, diff, join, relevantfields, addtotals with proper placement; (3) Fixed anti-pattern #1 with honest explanation of no HAVING equivalent and sort desc + limit as workaround; (4) Added dedup to pipeline diagram with explicit 'sort MUST precede dedup' notation; (5) Added full 'Post-Aggregation Filtering' subsection with 3 workarounds."
 }
