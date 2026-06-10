@@ -1,3 +1,11 @@
+---
+name: "cloudwatch-logs-query-builder"
+displayName: "CloudWatch Logs Query Builder"
+description: "Build optimal CloudWatch Logs queries across 3 languages (Logs Insights QL, OpenSearch PPL, OpenSearch SQL). Covers syntax, commands, functions, language selection, and query optimization."
+keywords: ["cloudwatch", "logs", "query", "insights", "ppl", "sql", "log analysis", "filterIndex", "aws:fieldIndex", "observability", "log query", "cloudwatch logs insights"]
+author: "because-and"
+---
+
 # CloudWatch Logs Query Builder Skill
 
 > **Verification Policy:** This skill contains ONLY patterns verified against a live AWS environment. When updating, always run queries in a real environment before adding—even if the source is official AWS documentation. Remove any content confirmed to be broken or misleading.
@@ -5,11 +13,37 @@
 ## Description
 Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands, and functions for all 3 query languages (Logs Insights QL, OpenSearch PPL, OpenSearch SQL) and generates optimal queries based on user requirements.
 
+## Quick Start
+1. **Identify target:** Confirm log group name(s) and verify field names with `fields @message | limit 5`
+2. **Select language:** Default to Logs Insights QL (use PPL for `eval`/`trendline`, SQL for window functions/JOIN)
+3. **Build query:** `filter` → `parse` (if needed) → `stats ... by bin()` → `sort` → `limit`
+- **MUST** set narrow time range via console/API first
+- **MUST** always end with `limit 50–100`
+- **Note:** If filter conditions depend on parsed fields, move `parse` before `filter`
+
 ## When to Use
 - Writing CloudWatch Logs queries
 - Optimizing log analysis queries
 - Deciding which query language to use
 - Reducing scan volume with filterIndex / aws:fieldIndex
+
+## Critical Rules (MUST / MUST NOT)
+
+> **Source of truth:** This table is the authoritative list of hard constraints. Other sections (Tips, Workflows, Anti-patterns, Error Scenarios) may repeat these rules inline for context — in case of conflict, this table wins.
+
+| # | Rule | Rationale |
+|---|------|-----------|
+| 1 | **MUST** include `limit` (50–100) in every query | Unbounded results are expensive and can overwhelm agent context |
+| 2 | **MUST** narrow the time range via console/API `startTime`/`endTime` first | Biggest cost lever — reduces scanned data volume |
+| 3 | **MUST** use `toMillis(@timestamp)` with epoch milliseconds for in-query time filtering | ISO 8601 string comparison silently returns 0 results |
+| 4 | **MUST NOT** use `ago()` | Does not exist — raises `MalformedQueryException` |
+| 5 | **MUST** place `sort` before `dedup` | `dedup` followed by `sort` is a syntax error |
+| 6 | **MUST** split `jsonParse` and dot access into separate `fields` commands | Dot access in the same command where `jsonParse` is called fails |
+| 7 | **MUST** use `bin(5m)` not `bin(300s)` | `bin()` caps each unit at its natural max (s→60); large values are silently clamped |
+| 8 | **MUST NOT** use PPL/SQL for Infrequent Access log class | IA supports Logs Insights QL only |
+| 9 | **MUST NOT** pass `parse`-created fields to `relevantfields` | Only `@message` and auto-discovered `@`-prefixed fields are accepted |
+| 10 | **MUST** select ONLY the primary log group in console when using `join`/subquery with SOURCE | Selecting both causes `ServiceUnavailableException` |
+| 11 | **MUST** use `ispresent(field)` before filtering/aggregating on optional fields | Missing fields silently produce no results or skewed aggregations |
 
 ## Knowledge Base
 - Context: CloudWatch Logs Query Languages Reference
@@ -556,6 +590,56 @@ See also: P3 JOIN セクション および P3 サブクエリ (Subquery) セク
 
 ---
 
+## Common Workflows
+
+### Workflow 1: Error Investigation
+*(→ see also P1: filter for full 3-language examples)*
+1. Set narrow time range via console UI or API `startTime`/`endTime`
+2. (Optional) Use `filterIndex` if indexed fields are available to reduce scan
+3. Filter errors: `filter @message like /(?i)(error|exception|fail)/`
+4. Sort and cap: `sort @timestamp desc | limit 100`
+5. If too many results, refine with `parse` to extract structured fields, then `stats count(*) by <field>`
+- **MUST** include `limit` to control cost
+- **MUST** narrow time range first (biggest cost lever)
+
+### Workflow 2: Latency / Performance Analysis
+1. Set time range (ideally ≤ 1h for initial analysis)
+2. Confirm field existence: `filter ispresent(duration)`
+3. Compute percentiles: `stats avg(duration) as avgMs, pct(duration, 95) as p95Ms, pct(duration, 99) as p99Ms by bin(5m)`
+4. Identify outliers: `filter duration > <p99 threshold>` → examine `@message`
+- **MUST** use `ispresent()` before aggregating optional fields
+- **MUST** use `bin(5m)` not `bin(300s)` (capped to 60s)
+
+### Workflow 3: Cross-Log-Group Correlation (Join)
+*(→ see also P3: JOIN for full syntax examples)*
+1. Select ONLY the primary log group in console
+2. Build main pipeline: `fields @timestamp, requestId, endpoint, status`
+3. Add join: `| join type=inner left=app right=auth where app.requestId=auth.requestId (SOURCE '/aws/lambda/auth-service')`
+4. Display joined fields: `| fields app.requestId, app.endpoint, auth.authResult`
+5. Cap results: `| limit 50`
+- **MUST** select only primary log group (not both) — otherwise `ServiceUnavailableException`
+- **MUST** use only equality (`=`) in join conditions
+- Max 1 join per query, max 50,000 unique keys on right side
+
+### Workflow 4: Cost-Optimized Aggregation
+1. Apply `filterIndex` on indexed field first
+2. Parse/filter to narrow rows early
+3. Aggregate: `stats count(*) as cnt by <groupField>`
+4. Post-filter (HAVING equivalent): `| filter cnt > <threshold>`
+5. Sort and limit: `| sort cnt desc | limit 20`
+- **MUST** place `filterIndex` first for maximum scan reduction
+- **MUST** use post-aggregation `filter` (not `where`) for HAVING equivalent
+
+### Workflow 5: Time-Series Comparison (diff)
+*(→ see also P2: pattern / diff)*
+1. Set time range covering both comparison periods
+2. Cluster logs: `pattern @message`
+3. Compare periods: `| diff`
+4. Review pattern frequency changes across the two halves of the time range
+- `diff` is ONLY valid immediately after `pattern`
+
+---
+
 ## Command Pipeline Ordering Rules
 
 Logs Insights QL uses a pipe-separated pipeline. Each command feeds its output to the next. The following rules define valid ordering.
@@ -642,3 +726,21 @@ filterIndex accountId = '123456789012'
 - **Time format** — `@timestamp` cannot be compared to ISO 8601 strings (silently returns 0 results); use `toMillis(@timestamp)` with epoch milliseconds. APIs expect epoch seconds for `startTime`/`endTime`.
 - **Regex escaping** — wrap patterns in `/.../` and escape special characters
 - **Overly wide time ranges** — slow and expensive
+
+## Error Scenarios
+
+> For detailed code examples and corrections, see also the AI Generation Anti-patterns in the Knowledge Base reference.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Query returns 0 results (no error) | ISO 8601 string comparison (`filter @timestamp > '2024-...'`) | Use `toMillis(@timestamp)` with epoch ms |
+| Query returns 0 results (no error) | Wrong time range in console/API | Widen `startTime`/`endTime`, verify log group has data |
+| Query returns 0 results (no error) | Field name typo or case mismatch | Run `fields @message | limit 5` first to confirm available fields |
+| `MalformedQueryException` | Used `ago()` function | Replace with `toMillis(@timestamp) >= (now() * 1000 - <ms>)` |
+| `MalformedQueryException` | `dedup` followed by `sort` | Reverse order: `sort` → `dedup` |
+| `MalformedQueryException` | `unnest` on `split()` result | Use multiple `parse` with regex capture groups instead |
+| `MalformedQueryException` | `parse ... as alias multi` | Use named capture groups: `parse ... /(?<name>...)/ multi` |
+| `ServiceUnavailableException` | Selected multiple log groups with `join`/subquery SOURCE | Select ONLY the primary log group in console |
+| Unexpected aggregation buckets | `bin(300s)` clamped to `bin(60s)` | Use `bin(5m)` — use appropriate larger unit |
+| `relevantfields` returns no results | Passed `parse`-created field | Use only `@message` or auto-discovered `@`-prefixed fields |
+| Post-`stats` filter has no effect | Referenced original field instead of alias | Use the alias from `stats`: `stats count(*) as c by svc | filter c > 5` |
