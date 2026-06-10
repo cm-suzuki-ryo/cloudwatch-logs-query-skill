@@ -1,5 +1,7 @@
 # CloudWatch Logs Query Builder Skill
 
+> **Verification Policy:** This skill contains ONLY patterns verified against a live AWS environment. When updating, always run queries in a real environment before adding—even if the source is official AWS documentation. Remove any content confirmed to be broken or misleading.
+
 ## Description
 Skill for efficiently building CloudWatch Logs queries. Covers syntax, commands, and functions for all 3 query languages (Logs Insights QL, OpenSearch PPL, OpenSearch SQL) and generates optimal queries based on user requirements.
 

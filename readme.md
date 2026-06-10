@@ -31,6 +31,14 @@ The skill will select the appropriate language and produce optimized queries usi
 - **Field index optimization** — reduces scan volume and cost with `filterIndex` / `aws:fieldIndex`
 - **Cross log group queries** — JOIN, subquery, and SOURCE patterns
 
+## Quality Policy
+
+This skill is maintained under the following principles:
+
+1. **Only verified content** — All query patterns and function behaviors have been tested against a live AWS environment before inclusion.
+2. **Always verify before updating** — Even official AWS documentation must be validated with real queries before being incorporated.
+3. **Actively remove broken content** — Functions that don't work (e.g., `ago()`) or patterns that silently fail (e.g., ISO 8601 string comparison on `@timestamp`) are excluded and documented as pitfalls to prevent misuse.
+
 ## Source
 Based on official AWS documentation (June 2026):
 - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax.html
